@@ -7,6 +7,7 @@ import { getProvider } from "../../lib/providers/index.mjs";
 import { readJsonlEntries } from "../../lib/storage/jsonl.mjs";
 import {
   appendLargeJsonlFixture,
+  appendTranscriptOnlySessions,
   createLargeCodexHomeFixture,
   createCodexHomeFixture,
   fixtureSessionIds,
@@ -59,6 +60,17 @@ test("Codex listing does not read a large transcript body", async (context) => {
 
   assert.equal(result.total, 1);
   assert.equal(result.records[0].id, "11111111-1111-4111-8111-111111111111");
+});
+
+test("Codex discovery keeps transcript-only sessions visible", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const transcriptOnly = await appendTranscriptOnlySessions(fixture);
+  const store = await codex.loadSessionStore({ codexHome: fixture.codexHome });
+
+  assert.equal(store.records.length, transcriptOnly.sessionCount + 3);
+  assert.equal(store.recordsById.get(transcriptOnly.firstId).recordSource, "transcript");
+  assert.equal(store.recordsById.get(transcriptOnly.lastId).recordSource, "transcript");
 });
 
 test("Codex discovery and cleanup stream large JSONL files", async (context) => {

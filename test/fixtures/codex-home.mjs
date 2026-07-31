@@ -247,6 +247,41 @@ export async function createLargeCodexHomeFixture({ sessionCount = 12_000 } = {}
   };
 }
 
+export async function appendTranscriptOnlySessions(
+  fixture,
+  { sessionCount = 500 } = {},
+) {
+  const sessionsDirectory = path.join(fixture.codexHome, "sessions", "transcript-only");
+  const batchSize = 50;
+  await fs.mkdir(sessionsDirectory, { recursive: true });
+
+  for (let start = 0; start < sessionCount; start += batchSize) {
+    const writes = [];
+    const end = Math.min(sessionCount, start + batchSize);
+
+    for (let index = start; index < end; index += 1) {
+      const suffix = String(index).padStart(6, "0");
+      const id = `transcript-only-${suffix}`;
+      const transcriptPath = path.join(
+        sessionsDirectory,
+        `rollout-transcript-only-${suffix}.jsonl`,
+      );
+      writes.push(fs.writeFile(
+        transcriptPath,
+        `${transcriptHeader({ cwd: fixture.workspace, id })}\n`,
+      ));
+    }
+
+    await Promise.all(writes);
+  }
+
+  return {
+    firstId: "transcript-only-000000",
+    lastId: `transcript-only-${String(sessionCount - 1).padStart(6, "0")}`,
+    sessionCount,
+  };
+}
+
 async function appendGeneratedLines(filePath, count, createEntry, trailingLines) {
   const output = createWriteStream(filePath, { encoding: "utf8", flags: "a" });
 
