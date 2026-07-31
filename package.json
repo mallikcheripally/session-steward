@@ -35,7 +35,7 @@
     "start": "node ./bin/session-steward.mjs",
     "serve": "node ./bin/session-steward.mjs",
     "check": "node ./bin/session-steward-cli.mjs --json --limit 5",
-    "test": "node --test test/providers/codex.test.mjs test/providers/codex-scale.test.mjs test/server.test.mjs"
+    "test": "node --test test/*.test.mjs test/providers/*.test.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.28.0",

@@ -39,6 +39,8 @@ To use a different Codex home for one run:
 npm start -- --codex-home /path/to/.codex
 ```
 
+The browser UI shows the active Codex session folder. A folder selected there is remembered for future browser and terminal sessions. The `--codex-home` option changes the folder only for that run and does not replace the saved choice.
+
 ## Terminal interface
 
 The browser UI is the primary interface. A text interface is also available:
@@ -47,6 +49,8 @@ The browser UI is the primary interface. A text interface is also available:
 node ./bin/session-steward-cli.mjs
 node ./bin/session-steward-cli.mjs --json --limit 10
 ```
+
+The terminal interface uses the same saved Codex folder as the browser UI. You can still pass `--codex-home /path/to/.codex` for a one-time override.
 
 After a global package installation, the commands will be `session-steward` and `session-steward-cli`.
 

@@ -3,7 +3,9 @@
 import { parseArgs } from "node:util";
 import { spawn } from "node:child_process";
 
+import packageMetadata from "../package.json" with { type: "json" };
 import { assertSupportedNode } from "../lib/runtime.mjs";
+import { findAvailableUpdate, formatUpdateNotice } from "../lib/update-check.mjs";
 
 assertSupportedNode();
 
@@ -17,6 +19,11 @@ const { values } = parseArgs({
   },
 });
 const port = values.port === undefined ? 0 : Number.parseInt(values.port, 10);
+const availableUpdate = await findAvailableUpdate({ packageMetadata });
+
+if (availableUpdate) {
+  process.stdout.write(`${formatUpdateNotice(availableUpdate)}\n`);
+}
 
 const server = await startLocalServer({
   codexHome: values["codex-home"],

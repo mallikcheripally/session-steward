@@ -37,6 +37,28 @@ const age = (timestamp) => {
       : `${Math.floor(minutes / 1440)}d ago`;
 };
 
+const fileSize = (bytes) => {
+  if (!Number.isFinite(bytes) || bytes < 0) return "Unknown";
+  if (bytes < 1024) return `${bytes} bytes`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = "bytes";
+  for (const nextUnit of units) {
+    value /= 1024;
+    unit = nextUnit;
+    if (value < 1024) break;
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${unit}`;
+};
+
+const versionStatus = (support) => ({
+  "exact-supported": "tested version",
+  newer: "newer than tested",
+  older: "older than tested",
+  unavailable: "not found",
+  unrecognized: "version not recognized",
+}[support?.status] || "version unavailable");
+
 function getPageNumbers(currentPage, pageCount) {
   const start = Math.max(1, Math.min(currentPage - Math.floor(MAX_PAGE_LINKS / 2), pageCount - MAX_PAGE_LINKS + 1));
   const end = Math.min(pageCount, start + MAX_PAGE_LINKS - 1);
@@ -55,6 +77,10 @@ function App() {
   const [supporting, setSupporting] = useState(false);
   const [page, setPage] = useState(1);
   const [token, setToken] = useState("");
+  const [providerSettings, setProviderSettings] = useState(null);
+  const [providerHomeDraft, setProviderHomeDraft] = useState("");
+  const [editingProviderHome, setEditingProviderHome] = useState(false);
+  const [isSavingProviderHome, setIsSavingProviderHome] = useState(false);
   const [dialog, setDialog] = useState(false);
   const [scope, setScope] = useState("deep");
   const [plan, setPlan] = useState(null);
@@ -100,7 +126,11 @@ function App() {
   };
 
   useEffect(() => {
-    api("/api/config").then(({ mutationToken }) => setToken(mutationToken)).catch((issue) => setError(issue.message));
+    api("/api/config").then(({ mutationToken, providers }) => {
+      setToken(mutationToken);
+      setProviderSettings(providers.codex);
+      setProviderHomeDraft(providers.codex.home);
+    }).catch((issue) => setError(issue.message));
     api("/api/compatibility").then(setCompatibility).catch((issue) => setError(issue.message));
   }, []);
   useEffect(() => {
@@ -180,6 +210,55 @@ function App() {
     }
   };
 
+  const finishProviderHomeChange = async (provider, message) => {
+    setProviderSettings(provider);
+    setProviderHomeDraft(provider.home);
+    setEditingProviderHome(false);
+    setSelected(new Set());
+    setInspected(null);
+    setPlan(null);
+    setDialog(false);
+    setPage(1);
+    setCompatibility(await api("/api/compatibility"));
+    await load();
+    setNotice({ kind: "success", text: message });
+  };
+
+  const saveProviderHome = async (event) => {
+    event.preventDefault();
+
+    try {
+      setIsSavingProviderHome(true);
+      setError("");
+      const { provider } = await api("/api/settings/providers/codex", {
+        method: "PUT",
+        headers: { "X-Session-Steward-Token": token },
+        body: JSON.stringify({ home: providerHomeDraft }),
+      });
+      await finishProviderHomeChange(provider, "Codex session folder updated.");
+    } catch (issue) {
+      setError(issue.message);
+    } finally {
+      setIsSavingProviderHome(false);
+    }
+  };
+
+  const resetProviderHome = async () => {
+    try {
+      setIsSavingProviderHome(true);
+      setError("");
+      const { provider } = await api("/api/settings/providers/codex", {
+        method: "DELETE",
+        headers: { "X-Session-Steward-Token": token },
+      });
+      await finishProviderHomeChange(provider, "Using the default Codex session folder.");
+    } catch (issue) {
+      setError(issue.message);
+    } finally {
+      setIsSavingProviderHome(false);
+    }
+  };
+
   const toggle = (id) => setSelected((current) => {
     const next = new Set(current);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -201,6 +280,17 @@ function App() {
       <div><div className="mb-3 flex items-center gap-2 text-xs font-semibold tracking-[.18em] text-emerald-400"><Sparkles size={14}/> LOCAL SESSION CLEANUP</div><h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Session Steward</h1><p className="mt-2 max-w-2xl text-sm text-zinc-400">Review local Codex sessions before you remove them.</p></div>
       <div className="flex items-center gap-2"><CompatibilityControl compatibilityRef={compatibilityRef} compatibility={compatibility} expanded={showCompatibilityDetails} onToggle={() => setShowCompatibilityDetails((current) => !current)} onClose={() => setShowCompatibilityDetails(false)}/><button disabled={isRefreshing} onClick={() => load({ showRefreshNotice: true })} className="button secondary"><RefreshCw size={16} className={isRefreshing ? "animate-spin" : undefined}/> {isRefreshing ? "Refreshing" : "Refresh"}</button></div>
     </header>
+    <ProviderHomeControl
+      editing={editingProviderHome}
+      isSaving={isSavingProviderHome}
+      onCancel={() => { setEditingProviderHome(false); setProviderHomeDraft(providerSettings.home); }}
+      onChange={setProviderHomeDraft}
+      onEdit={() => { setProviderHomeDraft(providerSettings.home); setEditingProviderHome(true); }}
+      onReset={resetProviderHome}
+      onSubmit={saveProviderHome}
+      provider={providerSettings}
+      value={providerHomeDraft}
+    />
     {notice && <div className={`mb-5 flex items-center gap-3 rounded-xl border p-4 text-sm ${notice.kind === "success" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-amber-500/30 bg-amber-500/10 text-amber-100"}`}><Check size={18}/>{notice.text}</div>}
     {error && <div className="mb-5 flex items-center gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-100"><AlertTriangle size={18}/>{error}</div>}
     <section className="mb-5 grid gap-3 rounded-2xl border border-white/10 bg-zinc-900/70 p-4 sm:grid-cols-[1fr_180px_auto]">
@@ -216,8 +306,14 @@ function App() {
       <Pagination page={page} pages={pages} numbers={pageNumbers} setPage={setPage}/>
     </div>
     <aside className="rounded-2xl border border-white/10 bg-zinc-900/70 p-5"><p className="mb-3 text-xs font-semibold tracking-[.16em] text-emerald-400">INSPECT</p>{inspected ? <><h2 className="break-words text-lg font-semibold">{inspected.displayName}</h2><dl className="mt-5 space-y-4 text-sm"><Detail label="Workspace" value={inspected.cwd || "Not recorded"}/><Detail label="Transcript" value={inspected.rolloutMissing ? "Missing" : "Available"}/><Detail label="Relationship" value={inspected.isSubagent ? "Subagent" : inspected.isFork ? "Fork" : "Primary session"}/><Detail label="Linked subagents" value={String(inspected.childThreadIds.length)}/><Detail label="Metadata source" value={inspected.titleSource}/></dl></> : <><h2 className="text-lg font-semibold">Select a session</h2><p className="mt-2 text-sm leading-6 text-zinc-500">Its local ownership details appear here before you plan a deletion.</p></>}</aside></section>
-    {dialog && <div className="fixed inset-0 z-10 grid place-items-center bg-black/70 p-4"><section role="dialog" aria-modal="true" className="w-full max-w-xl rounded-2xl border border-white/10 bg-zinc-950 p-6 shadow-2xl"><p className="text-xs font-semibold tracking-[.16em] text-rose-300">DELETION PREVIEW</p><h2 className="mt-2 text-xl font-semibold">Delete local session artifacts</h2><div className="mt-5 grid gap-3 sm:grid-cols-2"><Scope checked={scope === "core"} title="Core removal" text="Registry, transcript, history, session index, logs, and linked subagents." onClick={() => makePlan("core")}/><Scope checked={scope === "deep"} title="Deep local scrub" text="Also removes verified Desktop references, memory outputs, and goal records." onClick={() => makePlan("deep")}/></div>{planError && <p className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100">{planError}</p>}{plan && <ul className="mt-5 space-y-2 rounded-xl border border-white/10 bg-white/[.03] p-4 text-sm text-zinc-300"><li>{plan.ids.length} sessions, including {plan.childCount} cascaded subagents</li><li>{plan.transcriptCount} transcripts and {plan.logRowCount} log rows</li>{scope === "deep" && <li>{plan.desktopStateMatchCount} Desktop references, {plan.memoryRowCount} memory outputs, {plan.goalRowCount} goal records</li>}</ul>}<p className="mt-5 rounded-xl border border-amber-500/20 bg-amber-500/[.06] p-3 text-sm leading-6 text-amber-100"><strong>Before deleting:</strong> close any active Codex sessions included in this selection. Active-session detection is unavailable, and deletion begins when you choose Delete local artifacts below.</p><div className="mt-6 flex justify-end gap-3"><button disabled={isDeleting} onClick={() => setDialog(false)} className="button secondary">Cancel</button><button disabled={isDeleting} onClick={remove} className="button danger"><ShieldCheck size={16} className={isDeleting ? "animate-spin" : undefined}/> {isDeleting ? "Deleting local artifacts" : "Delete local artifacts"}</button></div></section></div>}
+    {dialog && <div className="fixed inset-0 z-10 grid place-items-center bg-black/70 p-4"><section role="dialog" aria-modal="true" className="w-full max-w-xl rounded-2xl border border-white/10 bg-zinc-950 p-6 shadow-2xl"><p className="text-xs font-semibold tracking-[.16em] text-rose-300">DELETION PREVIEW</p><h2 className="mt-2 text-xl font-semibold">Delete local session artifacts</h2><div className="mt-5 grid gap-3 sm:grid-cols-2"><Scope checked={scope === "core"} title="Core removal" text="Registry, transcript, history, session index, logs, and linked subagents." onClick={() => makePlan("core")}/><Scope checked={scope === "deep"} title="Deep local scrub" text="Also removes verified Desktop references, memory outputs, and goal records." onClick={() => makePlan("deep")}/></div>{planError && <p className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100">{planError}</p>}{plan && <ul className="mt-5 space-y-2 rounded-xl border border-white/10 bg-white/[.03] p-4 text-sm text-zinc-300"><li>{plan.ids.length} sessions, including {plan.childCount} cascaded subagents</li><li>{plan.transcriptCount} transcripts and {plan.logRowCount} log rows</li><li>About {fileSize(plan.estimatedBackupBytes)} reserved for the backup</li>{scope === "deep" && <li>{plan.desktopStateMatchCount} Desktop references, {plan.memoryRowCount} memory outputs, {plan.goalRowCount} goal records</li>}</ul>}<p className="mt-5 rounded-xl border border-amber-500/20 bg-amber-500/[.06] p-3 text-sm leading-6 text-amber-100"><strong>Before deleting:</strong> close any active Codex sessions included in this selection. Active-session detection is unavailable, and deletion begins when you choose Delete local artifacts below.</p><div className="mt-6 flex justify-end gap-3"><button disabled={isDeleting} onClick={() => setDialog(false)} className="button secondary">Cancel</button><button disabled={isDeleting} onClick={remove} className="button danger"><ShieldCheck size={16} className={isDeleting ? "animate-spin" : undefined}/> {isDeleting ? "Deleting local artifacts" : "Delete local artifacts"}</button></div></section></div>}
   </div></main>;
+}
+
+function ProviderHomeControl({ editing, isSaving, onCancel, onChange, onEdit, onReset, onSubmit, provider, value }) {
+  if (!provider) return null;
+
+  return <section className="mb-5 rounded-2xl border border-white/10 bg-zinc-900/70 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div className="min-w-0"><p className="flex items-center gap-2 text-xs font-semibold tracking-[.14em] text-zinc-400"><FolderKanban size={14}/> CODEX SESSION FOLDER</p><p className="mt-2 break-all text-sm text-zinc-200">{provider.home}</p><p className="mt-1 text-xs text-zinc-500">Session Steward looks for Codex sessions here.{provider.source === "startup" ? " This folder is being used for this run." : ""}</p></div>{!editing && <div className="flex shrink-0 gap-2"><button disabled={isSaving} onClick={onEdit} className="button secondary">Change folder</button>{!provider.isDefault && <button disabled={isSaving} onClick={onReset} className="button secondary">Use default</button>}</div>}</div>{editing && <form onSubmit={onSubmit} className="mt-4 border-t border-white/10 pt-4"><label className="field"><span>Folder path</span><input autoFocus required spellCheck="false" value={value} onChange={(event) => onChange(event.target.value)} placeholder="~/.codex"/></label><div className="mt-3 flex justify-end gap-2"><button type="button" disabled={isSaving} onClick={onCancel} className="button secondary">Cancel</button><button type="submit" disabled={isSaving || !value.trim()} className="button secondary">{isSaving ? "Saving" : "Save folder"}</button></div></form>}</section>;
 }
 
 function Pagination({ page, pages, numbers, setPage }) {
@@ -238,7 +334,7 @@ function CompatibilityControl({ compatibility, compatibilityRef, expanded, onTog
     ...compatibility.newlyDiscovered,
   ];
 
-  return <div ref={compatibilityRef} className="relative"><button onClick={onToggle} aria-expanded={expanded} className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-2 text-xs font-medium transition hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-emerald-400/50 ${copy.tone}`}><span className="size-1.5 rounded-full bg-current"/>{copy.title}</button>{expanded && <section className="absolute right-0 z-20 mt-2 w-[min(28rem,calc(100vw-2.5rem))] rounded-xl border border-white/10 bg-zinc-950 p-4 text-sm text-zinc-200 shadow-2xl"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{compatibility.status === "ready" ? "Compatibility details" : copy.title}</p><p className="mt-1 text-zinc-400">{copy.text}</p></div><button onClick={onClose} aria-label="Close compatibility details" className="rounded-md p-1 text-zinc-400 transition hover:bg-white/10 hover:text-zinc-100"><X size={16}/></button></div><div className="mt-4 border-t border-white/10 pt-4 text-zinc-400"><p>Built for ChatGPT {compatibility.builtFor.chatgptDesktop.join(", ")} and Codex {compatibility.builtFor.codexCli.join(", ")}.</p><p className="mt-1">Installed: ChatGPT {compatibility.currentVersions.chatgptDesktop || "not found"} · Codex {compatibility.currentVersions.codexCli || "not found"}.</p><ul className="mt-3 space-y-1">{details.length > 0 ? details.map((detail) => <li key={detail}>{detail}</li>) : <li>No missing, changed, or newly discovered session storage was found.</li>}</ul></div></section>}</div>;
+  return <div ref={compatibilityRef} className="relative"><button onClick={onToggle} aria-expanded={expanded} className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-2 text-xs font-medium transition hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-emerald-400/50 ${copy.tone}`}><span className="size-1.5 rounded-full bg-current"/>{copy.title}</button>{expanded && <section className="absolute right-0 z-20 mt-2 w-[min(28rem,calc(100vw-2.5rem))] rounded-xl border border-white/10 bg-zinc-950 p-4 text-sm text-zinc-200 shadow-2xl"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{compatibility.status === "ready" ? "Compatibility details" : copy.title}</p><p className="mt-1 text-zinc-400">{copy.text}</p></div><button onClick={onClose} aria-label="Close compatibility details" className="rounded-md p-1 text-zinc-400 transition hover:bg-white/10 hover:text-zinc-100"><X size={16}/></button></div><div className="mt-4 border-t border-white/10 pt-4 text-zinc-400"><p>Tested with ChatGPT {compatibility.builtFor.chatgptDesktop.join(", ")} and Codex {compatibility.builtFor.codexCli.join(", ")}.</p><p className="mt-2">ChatGPT: {compatibility.currentVersions.chatgptDesktop || "not found"} ({versionStatus(compatibility.versionSupport?.chatgptDesktop)}).</p><p className="mt-1">Codex: {compatibility.currentVersions.codexCli || "not found"} ({versionStatus(compatibility.versionSupport?.codexCli)}).</p><p className="mt-2 text-xs">Version labels are informational. Cleanup availability is based on the session storage found on this computer.</p><ul className="mt-3 space-y-1">{details.length > 0 ? details.map((detail) => <li key={detail}>{detail}</li>) : <li>No missing, changed, or newly discovered session storage was found.</li>}</ul></div></section>}</div>;
 }
 
 const Detail = ({ label, value }) => <div className="border-b border-white/5 pb-3"><dt className="mb-1 text-[11px] font-semibold uppercase tracking-[.14em] text-zinc-500">{label}</dt><dd className="break-words text-zinc-300">{value}</dd></div>;

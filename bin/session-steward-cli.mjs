@@ -41,15 +41,30 @@ const numericLimit =
     ? Number.parseInt(values.limit, 10)
     : null;
 
-runCli({
-  codexHome: values["codex-home"],
-  help: values.help ?? false,
-  includeInternals: values["include-internals"] ?? false,
-  json: values.json ?? false,
-  limit: numericLimit,
-  search: values.search ?? "",
-  sort: values.sort ?? "updated",
-}).catch((error) => {
+async function main() {
+  const help = values.help ?? false;
+  let codexHome = values["codex-home"];
+
+  if (!help) {
+    const { createProviderSettings } = await import("../lib/settings.mjs");
+    const settings = await createProviderSettings({
+      providerHomeOverrides: codexHome === undefined ? {} : { codex: codexHome },
+    });
+    codexHome = settings.getHome("codex");
+  }
+
+  await runCli({
+    codexHome,
+    help,
+    includeInternals: values["include-internals"] ?? false,
+    json: values.json ?? false,
+    limit: numericLimit,
+    search: values.search ?? "",
+    sort: values.sort ?? "updated",
+  });
+}
+
+main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;

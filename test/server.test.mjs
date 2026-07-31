@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
 import { request as httpRequest } from "node:http";
+import os from "node:os";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
@@ -34,6 +37,43 @@ function startSlowDeletion({ baseUrl, bodyStart, token }) {
   });
 
   return { request, response };
+}
+
+function requestLocalServer({
+  body,
+  headers = {},
+  method = "GET",
+  path: requestPath = "/",
+  port,
+  setHost = true,
+}) {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({
+      headers,
+      host: "127.0.0.1",
+      method,
+      path: requestPath,
+      port,
+      setHost,
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        const responseText = Buffer.concat(chunks).toString("utf8");
+        resolve({
+          body: responseText ? JSON.parse(responseText) : null,
+          status: response.statusCode,
+        });
+      });
+    });
+    request.on("error", reject);
+
+    if (body !== undefined) {
+      request.write(body);
+    }
+
+    request.end();
+  });
 }
 
 test("the local server exposes the UI and synthetic Codex sessions", async (context) => {
@@ -83,6 +123,70 @@ test("cleanup requests require the local authorization token", async (context) =
   assert.deepEqual(await response.json(), {
     error: "Destructive requests must originate from this local server.",
   });
+});
+
+test("the local server rejects non-loopback and incorrect Host headers", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const server = await startLocalServer({ codexHome: fixture.codexHome, port: 0 });
+  context.after(async () => {
+    await server.close();
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const normalConfigResponse = await fetch(`${baseUrl}/api/config`);
+  const normalConfig = await normalConfigResponse.json();
+  assert.equal(normalConfigResponse.status, 200);
+  assert.equal(normalConfig.mutationToken, server.token);
+
+  for (const host of [
+    `attacker.example:${server.port}`,
+    "127.0.0.1:1",
+    "localhost",
+  ]) {
+    const response = await requestLocalServer({
+      headers: { Host: host },
+      path: "/api/config",
+      port: server.port,
+    });
+    assert.equal(response.status, 403);
+    assert.deepEqual(response.body, { error: "This request is not allowed." });
+    assert.equal(Object.hasOwn(response.body, "mutationToken"), false);
+  }
+
+  const missingHostResponse = await requestLocalServer({
+    path: "/api/config",
+    port: server.port,
+    setHost: false,
+  });
+  assert.equal(missingHostResponse.status, 400);
+  assert.equal(missingHostResponse.body, null);
+
+  const absoluteTargetResponse = await requestLocalServer({
+    headers: { Host: `127.0.0.1:${server.port}` },
+    path: `http://attacker.example:${server.port}/api/config`,
+    port: server.port,
+  });
+  assert.equal(absoluteTargetResponse.status, 403);
+  assert.deepEqual(absoluteTargetResponse.body, { error: "This request is not allowed." });
+
+  const attackerOrigin = `http://attacker.example:${server.port}`;
+  const deletionResponse = await requestLocalServer({
+    body: JSON.stringify({ ids: [fixtureSessionIds.standalone], scope: "core" }),
+    headers: {
+      "Content-Type": "application/json",
+      Host: `attacker.example:${server.port}`,
+      Origin: attackerOrigin,
+      "X-Session-Steward-Token": server.token,
+    },
+    method: "POST",
+    path: "/api/deletions",
+    port: server.port,
+  });
+  assert.equal(deletionResponse.status, 403);
+  assert.deepEqual(deletionResponse.body, { error: "This request is not allowed." });
+
+  const sessions = await fetch(`${baseUrl}/api/sessions?includeInternals=true`).then((response) => response.json());
+  assert.equal(sessions.records.some(({ id }) => id === fixtureSessionIds.standalone), true);
 });
 
 test("deep cleanup is paused when unrecognized storage exists", async (context) => {
@@ -150,6 +254,19 @@ test("only one deletion request can run at a time", async (context) => {
     token: server.token,
   });
   await delay(50);
+  const settingsResponse = await fetch(`${baseUrl}/api/settings/providers/codex`, {
+    body: JSON.stringify({ home: fixture.codexHome }),
+    headers: {
+      "Content-Type": "application/json",
+      "Origin": baseUrl,
+      "X-Session-Steward-Token": server.token,
+    },
+    method: "PUT",
+  });
+  assert.equal(settingsResponse.status, 409);
+  assert.deepEqual(await settingsResponse.json(), {
+    error: "Wait for the current change to finish before changing folders.",
+  });
   const secondResponse = await fetch(`${baseUrl}/api/deletions`, {
     body: JSON.stringify({ ids: [fixtureSessionIds.standalone], scope: "core" }),
     headers: {
@@ -188,4 +305,166 @@ test("the sessions API returns one requested page", async (context) => {
   assert.equal(result.page, 2);
   assert.equal(result.pageCount, 3);
   assert.equal(result.records.length, 25);
+});
+
+test("Codex folder settings persist while startup overrides remain run-only", async (context) => {
+  const startupFixture = await createCodexHomeFixture();
+  const savedFixture = await createLargeCodexHomeFixture({ sessionCount: 4 });
+  const configDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-config-"));
+  const servers = [];
+  context.after(async () => {
+    await Promise.allSettled(servers.map((server) => server.close()));
+    await Promise.all([
+      removeCodexHomeFixture(startupFixture.codexHome),
+      removeCodexHomeFixture(savedFixture.codexHome),
+      fs.rm(configDirectory, { force: true, recursive: true }),
+    ]);
+  });
+
+  const overriddenServer = await startLocalServer({
+    codexHome: startupFixture.codexHome,
+    configDirectory,
+    port: 0,
+  });
+  servers.push(overriddenServer);
+  const overriddenConfig = await fetch(`http://127.0.0.1:${overriddenServer.port}/api/config`).then((response) => response.json());
+  assert.equal(overriddenConfig.providers.codex.home, startupFixture.codexHome);
+  assert.equal(overriddenConfig.providers.codex.source, "startup");
+  await overriddenServer.close();
+  await assert.rejects(fs.access(path.join(configDirectory, "config.json")), { code: "ENOENT" });
+
+  const defaultServer = await startLocalServer({ configDirectory, port: 0 });
+  servers.push(defaultServer);
+  const defaultBaseUrl = `http://127.0.0.1:${defaultServer.port}`;
+  const defaultConfig = await fetch(`${defaultBaseUrl}/api/config`).then((response) => response.json());
+  assert.equal(defaultConfig.providers.codex.home, path.join(os.homedir(), ".codex"));
+  assert.equal(defaultConfig.providers.codex.source, "default");
+  const saveResponse = await fetch(`${defaultBaseUrl}/api/settings/providers/codex`, {
+    body: JSON.stringify({ home: savedFixture.codexHome }),
+    headers: {
+      "Content-Type": "application/json",
+      "Origin": defaultBaseUrl,
+      "X-Session-Steward-Token": defaultConfig.mutationToken,
+    },
+    method: "PUT",
+  });
+  assert.equal(saveResponse.status, 200);
+  const savedProvider = (await saveResponse.json()).provider;
+  assert.equal(savedProvider.home, savedFixture.codexHome);
+  assert.equal(savedProvider.source, "saved");
+  const savedSessions = await fetch(`${defaultBaseUrl}/api/sessions?includeInternals=true`).then((response) => response.json());
+  assert.equal(savedSessions.total, 7);
+  const deletionResponse = await fetch(`${defaultBaseUrl}/api/deletions`, {
+    body: JSON.stringify({ ids: [fixtureSessionIds.standalone], scope: "core" }),
+    headers: {
+      "Content-Type": "application/json",
+      "Origin": defaultBaseUrl,
+      "X-Session-Steward-Token": defaultConfig.mutationToken,
+    },
+    method: "POST",
+  });
+  assert.equal(deletionResponse.status, 200);
+  assert.equal((await deletionResponse.json()).verification.complete, true);
+  const sessionsAfterDeletion = await fetch(`${defaultBaseUrl}/api/sessions?includeInternals=true`).then((response) => response.json());
+  assert.equal(sessionsAfterDeletion.total, 6);
+  await defaultServer.close();
+
+  const secondOverrideServer = await startLocalServer({
+    codexHome: startupFixture.codexHome,
+    configDirectory,
+    port: 0,
+  });
+  servers.push(secondOverrideServer);
+  const secondOverrideConfig = await fetch(`http://127.0.0.1:${secondOverrideServer.port}/api/config`).then((response) => response.json());
+  assert.equal(secondOverrideConfig.providers.codex.home, startupFixture.codexHome);
+  assert.equal(secondOverrideConfig.providers.codex.source, "startup");
+  const overrideSessions = await fetch(`http://127.0.0.1:${secondOverrideServer.port}/api/sessions?includeInternals=true`).then((response) => response.json());
+  assert.equal(overrideSessions.total, 3);
+  await secondOverrideServer.close();
+  const persistedConfig = JSON.parse(await fs.readFile(path.join(configDirectory, "config.json"), "utf8"));
+  assert.equal(persistedConfig.providers.codex.home, savedFixture.codexHome);
+
+  const restoredServer = await startLocalServer({ configDirectory, port: 0 });
+  servers.push(restoredServer);
+  const restoredBaseUrl = `http://127.0.0.1:${restoredServer.port}`;
+  const restoredConfig = await fetch(`${restoredBaseUrl}/api/config`).then((response) => response.json());
+  assert.equal(restoredConfig.providers.codex.home, savedFixture.codexHome);
+  assert.equal(restoredConfig.providers.codex.source, "saved");
+  const resetResponse = await fetch(`${restoredBaseUrl}/api/settings/providers/codex`, {
+    headers: {
+      "Origin": restoredBaseUrl,
+      "X-Session-Steward-Token": restoredConfig.mutationToken,
+    },
+    method: "DELETE",
+  });
+  assert.equal(resetResponse.status, 200);
+  const resetProvider = (await resetResponse.json()).provider;
+  assert.equal(resetProvider.home, path.join(os.homedir(), ".codex"));
+  assert.equal(resetProvider.source, "default");
+  const resetConfig = JSON.parse(await fs.readFile(path.join(configDirectory, "config.json"), "utf8"));
+  assert.equal(resetConfig.providers.codex, undefined);
+  assert.deepEqual(await fs.readdir(configDirectory), ["config.json"]);
+  assert.equal((await fs.stat(path.join(configDirectory, "config.json"))).mode & 0o777, 0o600);
+});
+
+test("Codex folder settings reject invalid paths without changing the active folder", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const configDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-config-"));
+  const filePath = path.join(configDirectory, "not-a-folder");
+  await fs.writeFile(filePath, "private contents", "utf8");
+  await fs.writeFile(path.join(configDirectory, "config.json"), JSON.stringify({
+    providers: { codex: { home: "invalid/saved/folder" } },
+    version: 1,
+  }), "utf8");
+  const server = await startLocalServer({
+    codexHome: fixture.codexHome,
+    configDirectory,
+    port: 0,
+  });
+  context.after(async () => {
+    await server.close().catch(() => {});
+    await removeCodexHomeFixture(fixture.codexHome);
+    await fs.rm(configDirectory, { force: true, recursive: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const config = await fetch(`${baseUrl}/api/config`).then((response) => response.json());
+
+  for (const [home, expectedError] of [
+    ["relative/folder", "Enter a full folder path, such as ~/.codex."],
+    [path.join(configDirectory, "missing"), "Choose an existing folder."],
+    [filePath, "Choose a folder, not a file."],
+  ]) {
+    const response = await fetch(`${baseUrl}/api/settings/providers/codex`, {
+      body: JSON.stringify({ home }),
+      headers: {
+        "Content-Type": "application/json",
+        "Origin": baseUrl,
+        "X-Session-Steward-Token": config.mutationToken,
+      },
+      method: "PUT",
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: expectedError });
+  }
+
+  const unchanged = await fetch(`${baseUrl}/api/config`).then((response) => response.json());
+  assert.equal(unchanged.providers.codex.home, fixture.codexHome);
+  assert.equal(unchanged.providers.codex.source, "startup");
+});
+
+test("invalid saved folder settings fall back to the default", async (context) => {
+  const configDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-config-"));
+  await fs.writeFile(path.join(configDirectory, "config.json"), JSON.stringify({
+    providers: { codex: { home: "invalid/saved/folder" } },
+    version: 1,
+  }), "utf8");
+  const server = await startLocalServer({ configDirectory, port: 0 });
+  context.after(async () => {
+    await server.close().catch(() => {});
+    await fs.rm(configDirectory, { force: true, recursive: true });
+  });
+
+  const config = await fetch(`http://127.0.0.1:${server.port}/api/config`).then((response) => response.json());
+  assert.equal(config.providers.codex.home, path.join(os.homedir(), ".codex"));
+  assert.equal(config.providers.codex.source, "default");
 });

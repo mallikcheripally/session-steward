@@ -91,6 +91,61 @@ test("Codex compatibility reports an unfamiliar database without claiming suppor
   );
 });
 
+test("cleanup stops before creating a backup when disk capacity is insufficient", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const store = await codex.loadSessionStore({ codexHome: fixture.codexHome });
+  const plan = await codex.planSessionDeletion({
+    recordIds: [fixtureSessionIds.parent],
+    store,
+  });
+
+  await assert.rejects(
+    codex.preflightSessionDeletion({ availableDiskBytes: 0, plan, store }),
+    (error) => {
+      assert.match(error.message, /Not enough disk space to create a backup/u);
+      assert.equal(error.availableDiskBytes, 0);
+      assert.equal(error.estimatedBackupBytes > 0, true);
+      return true;
+    },
+  );
+  await assert.rejects(
+    access(path.join(fixture.codexHome, "session-steward-backups")),
+    { code: "ENOENT" },
+  );
+});
+
+test("cleanup failures after backup creation include the backup location", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const store = await codex.loadSessionStore({ codexHome: fixture.codexHome });
+  const plan = await codex.planSessionDeletion({
+    recordIds: [fixtureSessionIds.parent],
+    store,
+  });
+  const failingStore = {
+    ...store,
+    logsDatabasePath: store.stateDatabasePath,
+  };
+
+  let cleanupError = null;
+
+  try {
+    await codex.executeSessionDeletion({ plan, scope: "core", store: failingStore });
+  } catch (error) {
+    cleanupError = error;
+  }
+
+  assert.match(cleanupError?.message ?? "", /Cleanup stopped after the backup was created/u);
+  assert.equal(cleanupError.message.includes(cleanupError.backupDirectory), true);
+  await access(cleanupError.backupDirectory);
+  await access(path.join(cleanupError.backupDirectory, "operation.json"));
+  assert.equal(
+    queryRows(store.stateDatabasePath, "select count(*) as count from threads")[0].count,
+    3,
+  );
+});
+
 test("deep cleanup backs up, removes, and verifies only the selected family", async (context) => {
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
