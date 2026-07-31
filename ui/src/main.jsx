@@ -58,6 +58,7 @@ function App() {
   const [dialog, setDialog] = useState(false);
   const [scope, setScope] = useState("deep");
   const [plan, setPlan] = useState(null);
+  const [planError, setPlanError] = useState("");
   const [notice, setNotice] = useState(null);
   const [error, setError] = useState("");
   const [compatibility, setCompatibility] = useState(null);
@@ -136,6 +137,7 @@ function App() {
 
   const makePlan = async (nextScope = scope) => {
     try {
+      setPlanError("");
       const result = await api("/api/deletion-plans", {
         method: "POST",
         body: JSON.stringify({ ids: [...selected], scope: nextScope }),
@@ -143,14 +145,17 @@ function App() {
       setPlan(result.plan);
       setScope(nextScope);
       setError("");
+      return true;
     } catch (issue) {
+      setPlanError(issue.message);
       setError(issue.message);
+      return false;
     }
   };
 
   const openDeleteDialog = async () => {
-    await makePlan();
-    setDialog(true);
+    const nextScope = compatibility && compatibility.status !== "ready" ? "core" : scope;
+    if (await makePlan(nextScope)) setDialog(true);
   };
 
   const remove = async () => {
@@ -211,7 +216,7 @@ function App() {
       <Pagination page={page} pages={pages} numbers={pageNumbers} setPage={setPage}/>
     </div>
     <aside className="rounded-2xl border border-white/10 bg-zinc-900/70 p-5"><p className="mb-3 text-xs font-semibold tracking-[.16em] text-emerald-400">INSPECT</p>{inspected ? <><h2 className="break-words text-lg font-semibold">{inspected.displayName}</h2><dl className="mt-5 space-y-4 text-sm"><Detail label="Workspace" value={inspected.cwd || "Not recorded"}/><Detail label="Transcript" value={inspected.rolloutMissing ? "Missing" : "Available"}/><Detail label="Relationship" value={inspected.isSubagent ? "Subagent" : inspected.isFork ? "Fork" : "Primary session"}/><Detail label="Linked subagents" value={String(inspected.childThreadIds.length)}/><Detail label="Metadata source" value={inspected.titleSource}/></dl></> : <><h2 className="text-lg font-semibold">Select a session</h2><p className="mt-2 text-sm leading-6 text-zinc-500">Its local ownership details appear here before you plan a deletion.</p></>}</aside></section>
-    {dialog && <div className="fixed inset-0 z-10 grid place-items-center bg-black/70 p-4"><section role="dialog" aria-modal="true" className="w-full max-w-xl rounded-2xl border border-white/10 bg-zinc-950 p-6 shadow-2xl"><p className="text-xs font-semibold tracking-[.16em] text-rose-300">DELETION PREVIEW</p><h2 className="mt-2 text-xl font-semibold">Delete local session artifacts</h2><div className="mt-5 grid gap-3 sm:grid-cols-2"><Scope checked={scope === "core"} title="Core removal" text="Registry, transcript, history, session index, logs, and linked subagents." onClick={() => makePlan("core")}/><Scope checked={scope === "deep"} title="Deep local scrub" text="Also removes verified Desktop references, memory outputs, and goal records." onClick={() => makePlan("deep")}/></div>{plan && <ul className="mt-5 space-y-2 rounded-xl border border-white/10 bg-white/[.03] p-4 text-sm text-zinc-300"><li>{plan.ids.length} sessions, including {plan.childCount} cascaded subagents</li><li>{plan.transcriptCount} transcripts and {plan.logRowCount} log rows</li>{scope === "deep" && <li>{plan.desktopStateMatchCount} Desktop references, {plan.memoryRowCount} memory outputs, {plan.goalRowCount} goal records</li>}</ul>}<p className="mt-5 rounded-xl border border-amber-500/20 bg-amber-500/[.06] p-3 text-sm leading-6 text-amber-100"><strong>Before deleting:</strong> close any active Codex sessions included in this selection. Active-session detection is unavailable, and deletion begins when you choose Delete local artifacts below.</p><div className="mt-6 flex justify-end gap-3"><button disabled={isDeleting} onClick={() => setDialog(false)} className="button secondary">Cancel</button><button disabled={isDeleting} onClick={remove} className="button danger"><ShieldCheck size={16} className={isDeleting ? "animate-spin" : undefined}/> {isDeleting ? "Deleting local artifacts" : "Delete local artifacts"}</button></div></section></div>}
+    {dialog && <div className="fixed inset-0 z-10 grid place-items-center bg-black/70 p-4"><section role="dialog" aria-modal="true" className="w-full max-w-xl rounded-2xl border border-white/10 bg-zinc-950 p-6 shadow-2xl"><p className="text-xs font-semibold tracking-[.16em] text-rose-300">DELETION PREVIEW</p><h2 className="mt-2 text-xl font-semibold">Delete local session artifacts</h2><div className="mt-5 grid gap-3 sm:grid-cols-2"><Scope checked={scope === "core"} title="Core removal" text="Registry, transcript, history, session index, logs, and linked subagents." onClick={() => makePlan("core")}/><Scope checked={scope === "deep"} title="Deep local scrub" text="Also removes verified Desktop references, memory outputs, and goal records." onClick={() => makePlan("deep")}/></div>{planError && <p className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100">{planError}</p>}{plan && <ul className="mt-5 space-y-2 rounded-xl border border-white/10 bg-white/[.03] p-4 text-sm text-zinc-300"><li>{plan.ids.length} sessions, including {plan.childCount} cascaded subagents</li><li>{plan.transcriptCount} transcripts and {plan.logRowCount} log rows</li>{scope === "deep" && <li>{plan.desktopStateMatchCount} Desktop references, {plan.memoryRowCount} memory outputs, {plan.goalRowCount} goal records</li>}</ul>}<p className="mt-5 rounded-xl border border-amber-500/20 bg-amber-500/[.06] p-3 text-sm leading-6 text-amber-100"><strong>Before deleting:</strong> close any active Codex sessions included in this selection. Active-session detection is unavailable, and deletion begins when you choose Delete local artifacts below.</p><div className="mt-6 flex justify-end gap-3"><button disabled={isDeleting} onClick={() => setDialog(false)} className="button secondary">Cancel</button><button disabled={isDeleting} onClick={remove} className="button danger"><ShieldCheck size={16} className={isDeleting ? "animate-spin" : undefined}/> {isDeleting ? "Deleting local artifacts" : "Delete local artifacts"}</button></div></section></div>}
   </div></main>;
 }
 

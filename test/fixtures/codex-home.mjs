@@ -282,6 +282,21 @@ export async function appendTranscriptOnlySessions(
   };
 }
 
+export async function appendTranscriptOnlySubagent(
+  fixture,
+  { id = "transcript-only-subagent", parentId = fixtureSessionIds.parent } = {},
+) {
+  const sessionsDirectory = path.join(fixture.codexHome, "sessions", "transcript-only");
+  const transcriptPath = path.join(sessionsDirectory, `rollout-${id}.jsonl`);
+  await fs.mkdir(sessionsDirectory, { recursive: true });
+  await fs.writeFile(
+    transcriptPath,
+    `${transcriptHeader({ cwd: fixture.workspace, id, parentThreadId: parentId })}\n`,
+  );
+
+  return { id, parentId, transcriptPath };
+}
+
 async function appendGeneratedLines(filePath, count, createEntry, trailingLines) {
   const output = createWriteStream(filePath, { encoding: "utf8", flags: "a" });
 
