@@ -61,11 +61,20 @@ test("Codex listing does not read a large transcript body", async (context) => {
   assert.equal(result.records[0].id, "11111111-1111-4111-8111-111111111111");
 });
 
-test("Codex cleanup streams large JSONL files and preserves unrelated lines", async (context) => {
+test("Codex discovery and cleanup stream large JSONL files", async (context) => {
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
-  const store = await codex.loadSessionStore({ codexHome: fixture.codexHome });
   const largeFiles = await appendLargeJsonlFixture(fixture);
+  const store = await codex.loadSessionStore({ codexHome: fixture.codexHome });
+
+  assert.equal(store.records.length, 3);
+  assert.equal(store.recordsById.has("bulk-0"), false);
+  assert.equal(store.recordsById.get(fixtureSessionIds.child).displayName, "Repeated child");
+  assert.equal(
+    store.recordsById.get(fixtureSessionIds.standalone).displayName,
+    "Standalone duplicate two",
+  );
+
   const plan = await codex.planSessionDeletion({
     recordIds: [fixtureSessionIds.parent],
     store,

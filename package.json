@@ -28,6 +28,7 @@
   },
   "scripts": {
     "build": "vite build",
+    "benchmark:discovery": "node --expose-gc test/benchmarks/codex-discovery.mjs",
     "benchmark:scale": "node --expose-gc test/benchmarks/codex-list.mjs",
     "prepack": "npm run build",
     "start": "node ./bin/session-steward.mjs",
