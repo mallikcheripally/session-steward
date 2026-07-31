@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { stat, truncate } from "node:fs/promises";
+import path from "node:path";
+import { access, stat, truncate } from "node:fs/promises";
 import test from "node:test";
 
 import { getProvider } from "../../lib/providers/index.mjs";
+import { readJsonlEntries } from "../../lib/storage/jsonl.mjs";
 import {
+  appendLargeJsonlFixture,
   createLargeCodexHomeFixture,
+  createCodexHomeFixture,
+  fixtureSessionIds,
   removeCodexHomeFixture,
 } from "../fixtures/codex-home.mjs";
 
@@ -54,4 +59,49 @@ test("Codex listing does not read a large transcript body", async (context) => {
 
   assert.equal(result.total, 1);
   assert.equal(result.records[0].id, "11111111-1111-4111-8111-111111111111");
+});
+
+test("Codex cleanup streams large JSONL files and preserves unrelated lines", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const store = await codex.loadSessionStore({ codexHome: fixture.codexHome });
+  const largeFiles = await appendLargeJsonlFixture(fixture);
+  const plan = await codex.planSessionDeletion({
+    recordIds: [fixtureSessionIds.parent],
+    store,
+  });
+
+  assert.equal(plan.historyMatchCount, 3);
+  assert.equal(plan.sessionIndexMatchCount, 3);
+  const result = await codex.executeSessionDeletion({ plan, scope: "core", store });
+  const verification = await codex.verifySessionDeletion({ plan, scope: "core", store });
+  assert.equal(verification.complete, true);
+  assert.equal(verification.remainingHistoryEntryCount, 0);
+  assert.equal(verification.remainingSessionIndexEntryCount, 0);
+  await access(path.join(result.backupDirectory, "history.jsonl"));
+  await access(path.join(result.backupDirectory, "session_index.jsonl"));
+
+  let historyBulkCount = 0;
+  let malformedHistoryPreserved = false;
+  for await (const entry of readJsonlEntries(largeFiles.historyPath)) {
+    if (entry.parsed?.session_id?.startsWith("bulk-")) historyBulkCount += 1;
+    if (entry.raw === "malformed history line") malformedHistoryPreserved = true;
+    assert.equal(plan.ids.includes(String(entry.parsed?.session_id)), false);
+  }
+
+  let sessionIndexBulkCount = 0;
+  let standaloneCount = 0;
+  let malformedIndexPreserved = false;
+  for await (const entry of readJsonlEntries(largeFiles.sessionIndexPath)) {
+    if (entry.parsed?.id?.startsWith("bulk-")) sessionIndexBulkCount += 1;
+    if (entry.parsed?.id === fixtureSessionIds.standalone) standaloneCount += 1;
+    if (entry.raw === "malformed index line") malformedIndexPreserved = true;
+    assert.equal(plan.ids.includes(String(entry.parsed?.id)), false);
+  }
+
+  assert.equal(historyBulkCount, largeFiles.entryCount);
+  assert.equal(sessionIndexBulkCount, largeFiles.entryCount);
+  assert.equal(standaloneCount, 3);
+  assert.equal(malformedHistoryPreserved, true);
+  assert.equal(malformedIndexPreserved, true);
 });

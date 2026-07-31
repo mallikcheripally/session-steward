@@ -36,7 +36,7 @@ test("Codex plans cascade from parent to child but not child to parent", async (
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
   const store = await codex.loadSessionStore({ codexHome: fixture.codexHome });
 
-  const parentPlan = codex.planSessionDeletion({
+  const parentPlan = await codex.planSessionDeletion({
     recordIds: [fixtureSessionIds.parent],
     store,
   });
@@ -46,7 +46,7 @@ test("Codex plans cascade from parent to child but not child to parent", async (
   ]));
   assert.equal(parentPlan.childCount, 1);
 
-  const childPlan = codex.planSessionDeletion({
+  const childPlan = await codex.planSessionDeletion({
     recordIds: [fixtureSessionIds.child],
     store,
   });
@@ -72,7 +72,7 @@ test("deep cleanup backs up, removes, and verifies only the selected family", as
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
   const store = await codex.loadSessionStore({ codexHome: fixture.codexHome });
-  const plan = codex.planSessionDeletion({
+  const plan = await codex.planSessionDeletion({
     recordIds: [fixtureSessionIds.parent],
     store,
   });

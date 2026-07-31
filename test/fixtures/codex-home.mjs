@@ -1,7 +1,10 @@
+import { once } from "node:events";
+import { createWriteStream } from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { finished } from "node:stream/promises";
 
 export const fixtureSessionIds = Object.freeze({
   child: "22222222-2222-4222-8222-222222222222",
@@ -242,4 +245,58 @@ export async function createLargeCodexHomeFixture({ sessionCount = 12_000 } = {}
     ...fixture,
     sessionCount,
   };
+}
+
+async function appendGeneratedLines(filePath, count, createEntry, trailingLines) {
+  const output = createWriteStream(filePath, { encoding: "utf8", flags: "a" });
+
+  try {
+    for (let index = 0; index < count; index += 1) {
+      if (!output.write(`${JSON.stringify(createEntry(index))}\n`)) {
+        await once(output, "drain");
+      }
+    }
+
+    for (const line of trailingLines) {
+      if (!output.write(`${line}\n`)) {
+        await once(output, "drain");
+      }
+    }
+
+    output.end();
+    await finished(output);
+  } catch (error) {
+    output.destroy();
+    throw error;
+  }
+}
+
+export async function appendLargeJsonlFixture(fixture, { entryCount = 50_000 } = {}) {
+  const historyPath = path.join(fixture.codexHome, "history.jsonl");
+  const sessionIndexPath = path.join(fixture.codexHome, "session_index.jsonl");
+
+  await Promise.all([
+    appendGeneratedLines(
+      historyPath,
+      entryCount,
+      (index) => ({ session_id: `bulk-${index}`, ts: index, text: `History ${index}` }),
+      [
+        JSON.stringify({ session_id: fixtureSessionIds.parent, ts: 1, text: "Repeated parent" }),
+        "malformed history line",
+      ],
+    ),
+    appendGeneratedLines(
+      sessionIndexPath,
+      entryCount,
+      (index) => ({ id: `bulk-${index}`, thread_name: `Session ${index}`, updated_at: String(index) }),
+      [
+        JSON.stringify({ id: fixtureSessionIds.child, thread_name: "Repeated child", updated_at: "2026-07-02T00:00:00.000Z" }),
+        JSON.stringify({ id: fixtureSessionIds.standalone, thread_name: "Standalone duplicate one", updated_at: "2026-07-02T00:00:00.000Z" }),
+        JSON.stringify({ id: fixtureSessionIds.standalone, thread_name: "Standalone duplicate two", updated_at: "2026-07-03T00:00:00.000Z" }),
+        "malformed index line",
+      ],
+    ),
+  ]);
+
+  return { entryCount, historyPath, sessionIndexPath };
 }
