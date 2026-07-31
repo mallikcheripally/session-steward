@@ -45,6 +45,21 @@ test("Codex listing stays bounded for a large session collection", async (contex
   assert.ok(JSON.stringify(firstPage).length < 50_000);
 });
 
+test("cleanup loads only the selected family from a large collection", async (context) => {
+  const fixture = await createLargeCodexHomeFixture({ sessionCount: 50_000 });
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.parent],
+  });
+
+  assert.deepEqual(new Set(store.records.map(({ id }) => id)), new Set([
+    fixtureSessionIds.parent,
+    fixtureSessionIds.child,
+  ]));
+  assert.equal(store.recordsById.size, 2);
+});
+
 test("Codex listing does not read a large transcript body", async (context) => {
   const fixture = await createLargeCodexHomeFixture({ sessionCount: 10 });
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
@@ -77,15 +92,14 @@ test("Codex discovery and cleanup stream large JSONL files", async (context) => 
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
   const largeFiles = await appendLargeJsonlFixture(fixture);
-  const store = await codex.loadSessionStore({ codexHome: fixture.codexHome });
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.parent],
+  });
 
-  assert.equal(store.records.length, 3);
+  assert.equal(store.records.length, 2);
   assert.equal(store.recordsById.has("bulk-0"), false);
   assert.equal(store.recordsById.get(fixtureSessionIds.child).displayName, "Repeated child");
-  assert.equal(
-    store.recordsById.get(fixtureSessionIds.standalone).displayName,
-    "Standalone duplicate two",
-  );
 
   const plan = await codex.planSessionDeletion({
     recordIds: [fixtureSessionIds.parent],

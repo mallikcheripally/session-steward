@@ -1,13 +1,13 @@
 {
   "name": "session-steward",
   "version": "0.1.0",
-  "description": "Review and safely remove local AI coding sessions.",
-  "private": true,
-  "license": "UNLICENSED",
+  "description": "Safely review, back up, and remove local Codex sessions with a browser UI or terminal CLI.",
+  "license": "MIT",
+  "author": "Mallik Cheripally",
   "type": "module",
   "bin": {
-    "session-steward": "./bin/session-steward.mjs",
-    "session-steward-cli": "./bin/session-steward-cli.mjs"
+    "session-steward": "bin/session-steward.mjs",
+    "session-steward-cli": "bin/session-steward-cli.mjs"
   },
   "repository": {
     "type": "git",
@@ -15,16 +15,35 @@
   },
   "homepage": "https://github.com/mallikcheripally/session-steward#readme",
   "bugs": "https://github.com/mallikcheripally/session-steward/issues",
-  "keywords": ["codex", "sessions", "cleanup", "local-first"],
+  "keywords": [
+    "codex",
+    "codex-cli",
+    "codex-sessions",
+    "openai-codex",
+    "openai",
+    "chatgpt",
+    "session-manager",
+    "session-cleanup",
+    "ai-coding-agent",
+    "cli",
+    "backup",
+    "privacy",
+    "local-first"
+  ],
   "os": ["darwin", "linux"],
   "files": [
     "bin",
     "dist",
+    "docs",
     "lib",
+    "LICENSE",
     "README.md"
   ],
   "engines": {
     "node": ">=24.15.0"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "vite build",

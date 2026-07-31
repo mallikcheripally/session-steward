@@ -174,7 +174,72 @@ test("deep cleanup backs up, removes, and verifies only the selected family", as
     "utf8",
   ));
   assert.deepEqual(new Set(operation.ids), new Set(plan.ids));
+  assert.equal(operation.version, 2);
+  assert.equal(operation.files.every(({ backupPath, originalPath }) => backupPath && originalPath), true);
 
   const remainingStore = await codex.loadSessionStore({ codexHome: fixture.codexHome });
   assert.deepEqual(remainingStore.records.map(({ id }) => id), [fixtureSessionIds.standalone]);
+});
+
+test("cleanup cancellation stops at a safe boundary", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.parent],
+  });
+  const plan = await codex.planSessionDeletion({
+    recordIds: [fixtureSessionIds.parent],
+    store,
+  });
+  let cancelRequested = false;
+  let cancellationError = null;
+
+  try {
+    await codex.executeSessionDeletion({
+      onProgress: ({ phase }) => {
+        if (phase === "backup") cancelRequested = true;
+      },
+      plan,
+      shouldCancel: () => cancelRequested,
+      store,
+    });
+  } catch (error) {
+    cancellationError = error;
+  }
+
+  assert.equal(cancellationError?.cancelled, true);
+  await access(path.join(cancellationError.backupDirectory, "operation.json"));
+  assert.equal(
+    queryRows(store.stateDatabasePath, "select count(*) as count from threads")[0].count,
+    3,
+  );
+  await access(fixture.transcripts.parent);
+  await access(fixture.transcripts.child);
+});
+
+test("a cleanup backup can restore the selected session family", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.parent],
+  });
+  const plan = await codex.planSessionDeletion({
+    recordIds: [fixtureSessionIds.parent],
+    store,
+  });
+  const result = await codex.executeSessionDeletion({ plan, scope: "deep", store });
+  assert.equal((await codex.verifySessionDeletion({ plan, scope: "deep", store })).complete, true);
+
+  const restored = await codex.restoreSessionDeletionBackup({
+    backupDirectory: result.backupDirectory,
+    codexHome: fixture.codexHome,
+  });
+  assert.equal(restored.restoredFileCount > 0, true);
+  await access(restored.safetyBackupDirectory);
+  await access(fixture.transcripts.parent);
+  await access(fixture.transcripts.child);
+  const restoredStore = await codex.loadSessionStore({ codexHome: fixture.codexHome });
+  assert.deepEqual(new Set(restoredStore.records.map(({ id }) => id)), new Set(Object.values(fixtureSessionIds)));
 });

@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import { request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
@@ -37,6 +38,45 @@ function startSlowDeletion({ baseUrl, bodyStart, token }) {
   });
 
   return { request, response };
+}
+
+async function createDeletionPlan(baseUrl, ids, scope = "core") {
+  const response = await fetch(`${baseUrl}/api/deletion-plans`, {
+    body: JSON.stringify({ ids, scope }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200, body.error);
+  return body.plan;
+}
+
+async function waitForOperation(baseUrl, operation) {
+  let current = operation;
+
+  while (["queued", "running", "restoring"].includes(current.status)) {
+    await delay(10);
+    const response = await fetch(`${baseUrl}/api/deletions/${current.id}`);
+    assert.equal(response.status, 200);
+    current = (await response.json()).operation;
+  }
+
+  return current;
+}
+
+async function runDeletion(baseUrl, token, planId) {
+  const response = await fetch(`${baseUrl}/api/deletions`, {
+    body: JSON.stringify({ planId }),
+    headers: {
+      "Content-Type": "application/json",
+      Origin: baseUrl,
+      "X-Session-Steward-Token": token,
+    },
+    method: "POST",
+  });
+  const body = await response.json();
+  assert.equal(response.status, 202, body.error);
+  return waitForOperation(baseUrl, body.operation);
 }
 
 function requestLocalServer({
@@ -123,6 +163,28 @@ test("cleanup requests require the local authorization token", async (context) =
   assert.deepEqual(await response.json(), {
     error: "Destructive requests must originate from this local server.",
   });
+});
+
+test("cleanup requests reject oversized bodies", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const server = await startLocalServer({ codexHome: fixture.codexHome, port: 0 });
+  context.after(async () => {
+    await server.close();
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const response = await fetch(`${baseUrl}/api/deletions`, {
+    body: JSON.stringify({ planId: "x".repeat(70 * 1024) }),
+    headers: {
+      "Content-Type": "application/json",
+      Origin: baseUrl,
+      "X-Session-Steward-Token": server.token,
+    },
+    method: "POST",
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "Request body is too large." });
 });
 
 test("the local server rejects non-loopback and incorrect Host headers", async (context) => {
@@ -212,20 +274,6 @@ test("deep cleanup is paused when unrecognized storage exists", async (context) 
     method: "POST",
   });
   assert.equal(corePlanResponse.status, 200);
-  const response = await fetch(`${baseUrl}/api/deletions`, {
-    body: JSON.stringify({ ids: [fixtureSessionIds.parent], scope: "deep" }),
-    headers: {
-      "Content-Type": "application/json",
-      "Origin": baseUrl,
-      "X-Session-Steward-Token": server.token,
-    },
-    method: "POST",
-  });
-
-  assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), {
-    error: "Deep cleanup is paused because unrecognized Codex storage was found.",
-  });
   const sessions = await fetch(`${baseUrl}/api/sessions?includeInternals=true`).then((result) => result.json());
   assert.equal(sessions.records.some(({ id }) => id === fixtureSessionIds.parent), true);
 });
@@ -248,9 +296,11 @@ test("only one deletion request can run at a time", async (context) => {
     method: "POST",
   });
   assert.equal(invalidResponse.status, 400);
+  const firstPlan = await createDeletionPlan(baseUrl, [fixtureSessionIds.parent]);
+  const secondPlan = await createDeletionPlan(baseUrl, [fixtureSessionIds.standalone]);
   const first = startSlowDeletion({
     baseUrl,
-    bodyStart: "{\"ids\":",
+    bodyStart: "{\"planId\":\"",
     token: server.token,
   });
   await delay(50);
@@ -268,7 +318,7 @@ test("only one deletion request can run at a time", async (context) => {
     error: "Wait for the current change to finish before changing folders.",
   });
   const secondResponse = await fetch(`${baseUrl}/api/deletions`, {
-    body: JSON.stringify({ ids: [fixtureSessionIds.standalone], scope: "core" }),
+    body: JSON.stringify({ planId: secondPlan.id }),
     headers: {
       "Content-Type": "application/json",
       "Origin": baseUrl,
@@ -281,10 +331,12 @@ test("only one deletion request can run at a time", async (context) => {
   assert.deepEqual(await secondResponse.json(), {
     error: "Another deletion is already in progress.",
   });
-  first.request.end(`${JSON.stringify([fixtureSessionIds.parent])},\"scope\":\"core\"}`);
+  first.request.end(`${firstPlan.id}\"}`);
   const firstResponse = await first.response;
-  assert.equal(firstResponse.status, 200);
-  assert.equal(firstResponse.body.verification.complete, true);
+  assert.equal(firstResponse.status, 202);
+  const completed = await waitForOperation(baseUrl, firstResponse.body.operation);
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.verification.complete, true);
 });
 
 test("the sessions API returns one requested page", async (context) => {
@@ -305,6 +357,103 @@ test("the sessions API returns one requested page", async (context) => {
   assert.equal(result.page, 2);
   assert.equal(result.pageCount, 3);
   assert.equal(result.records.length, 25);
+});
+
+test("deletion plans stay server-side and ignore unrelated session activity", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const server = await startLocalServer({ codexHome: fixture.codexHome, port: 0 });
+  context.after(async () => {
+    await server.close();
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const plan = await createDeletionPlan(baseUrl, [fixtureSessionIds.parent], "deep");
+
+  assert.equal(typeof plan.id, "string");
+  assert.equal(plan.sessionCount, 2);
+  assert.equal(Object.hasOwn(plan, "ids"), false);
+  assert.equal(Object.hasOwn(plan, "records"), false);
+  assert.equal(plan.recordSamples.length, 2);
+  assert.ok(JSON.stringify(plan).length < 20_000);
+
+  await fs.appendFile(
+    path.join(fixture.codexHome, "history.jsonl"),
+    `${JSON.stringify({ session_id: "another-session", text: "changed", ts: Date.now() })}\n`,
+  );
+  await fs.appendFile(
+    path.join(fixture.codexHome, "session_index.jsonl"),
+    `${JSON.stringify({ id: "another-session", thread_name: "Unrelated session" })}\n`,
+  );
+  const desktopStatePath = path.join(fixture.codexHome, ".codex-global-state.json");
+  const desktopState = JSON.parse(await fs.readFile(desktopStatePath, "utf8"));
+  desktopState["thread-project-assignments"]["another-session"] = "project-c";
+  await fs.writeFile(desktopStatePath, `${JSON.stringify(desktopState)}\n`);
+
+  for (const [databaseName, statement] of [
+    ["state_5.sqlite", `update threads set updated_at_ms = updated_at_ms + 1 where id = '${fixtureSessionIds.standalone}'`],
+    ["logs_2.sqlite", `insert into logs values ('${fixtureSessionIds.standalone}', 'new unrelated log')`],
+    ["memories_1.sqlite", `insert into stage1_outputs values ('${fixtureSessionIds.standalone}', 'new unrelated memory')`],
+    ["goals_1.sqlite", `insert into thread_goals values ('${fixtureSessionIds.standalone}', 'new unrelated goal')`],
+  ]) {
+    const database = new DatabaseSync(path.join(fixture.codexHome, databaseName));
+    try {
+      database.exec(statement);
+    } finally {
+      database.close();
+    }
+  }
+
+  const operation = await runDeletion(baseUrl, server.token, plan.id);
+  assert.equal(operation.status, "completed");
+  assert.equal(operation.errorCode, null);
+
+  const reusedPlanResponse = await fetch(`${baseUrl}/api/deletions`, {
+    body: JSON.stringify({ planId: plan.id }),
+    headers: {
+      "Content-Type": "application/json",
+      Origin: baseUrl,
+      "X-Session-Steward-Token": server.token,
+    },
+    method: "POST",
+  });
+  assert.equal(reusedPlanResponse.status, 400);
+  assert.deepEqual(await reusedPlanResponse.json(), {
+    code: "DELETION_PLAN_REVIEW_REQUIRED",
+    error: "This deletion preview has expired. Review the selection again.",
+  });
+
+  const sessions = await fetch(`${baseUrl}/api/sessions?includeInternals=true`).then((response) => response.json());
+  assert.equal(sessions.records.some(({ id }) => id === fixtureSessionIds.parent), false);
+  assert.equal(sessions.records.some(({ id }) => id === fixtureSessionIds.standalone), true);
+});
+
+test("deletion plans require review when selected session data changes", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const server = await startLocalServer({ codexHome: fixture.codexHome, port: 0 });
+  context.after(async () => {
+    await server.close();
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const plan = await createDeletionPlan(baseUrl, [fixtureSessionIds.parent]);
+
+  await fs.appendFile(
+    path.join(fixture.codexHome, "history.jsonl"),
+    `${JSON.stringify({
+      session_id: fixtureSessionIds.parent,
+      text: "selected session changed",
+      ts: Date.now(),
+    })}\n`,
+  );
+
+  const operation = await runDeletion(baseUrl, server.token, plan.id);
+  assert.equal(operation.status, "failed");
+  assert.equal(operation.errorCode, "DELETION_PLAN_REVIEW_REQUIRED");
+  assert.equal(operation.backupDirectory, null);
+  assert.match(operation.error, /Session data changed after this preview/u);
+
+  const sessions = await fetch(`${baseUrl}/api/sessions?includeInternals=true`).then((response) => response.json());
+  assert.equal(sessions.records.some(({ id }) => id === fixtureSessionIds.parent), true);
 });
 
 test("Codex folder settings persist while startup overrides remain run-only", async (context) => {
@@ -354,17 +503,10 @@ test("Codex folder settings persist while startup overrides remain run-only", as
   assert.equal(savedProvider.source, "saved");
   const savedSessions = await fetch(`${defaultBaseUrl}/api/sessions?includeInternals=true`).then((response) => response.json());
   assert.equal(savedSessions.total, 7);
-  const deletionResponse = await fetch(`${defaultBaseUrl}/api/deletions`, {
-    body: JSON.stringify({ ids: [fixtureSessionIds.standalone], scope: "core" }),
-    headers: {
-      "Content-Type": "application/json",
-      "Origin": defaultBaseUrl,
-      "X-Session-Steward-Token": defaultConfig.mutationToken,
-    },
-    method: "POST",
-  });
-  assert.equal(deletionResponse.status, 200);
-  assert.equal((await deletionResponse.json()).verification.complete, true);
+  const deletionPlan = await createDeletionPlan(defaultBaseUrl, [fixtureSessionIds.standalone]);
+  const deletion = await runDeletion(defaultBaseUrl, defaultConfig.mutationToken, deletionPlan.id);
+  assert.equal(deletion.status, "completed");
+  assert.equal(deletion.verification.complete, true);
   const sessionsAfterDeletion = await fetch(`${defaultBaseUrl}/api/sessions?includeInternals=true`).then((response) => response.json());
   assert.equal(sessionsAfterDeletion.total, 6);
   await defaultServer.close();
