@@ -1,0 +1,48 @@
+{
+  "name": "session-steward",
+  "version": "0.1.0",
+  "description": "Review and safely remove local AI coding sessions.",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "bin": {
+    "session-steward": "./bin/session-steward.mjs",
+    "session-steward-cli": "./bin/session-steward-cli.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mallikcheripally/session-steward.git"
+  },
+  "homepage": "https://github.com/mallikcheripally/session-steward#readme",
+  "bugs": "https://github.com/mallikcheripally/session-steward/issues",
+  "keywords": ["codex", "sessions", "cleanup", "local-first"],
+  "os": ["darwin", "linux"],
+  "files": [
+    "bin",
+    "dist",
+    "lib",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "build": "vite build",
+    "prepack": "npm run build",
+    "start": "node ./bin/session-steward.mjs",
+    "serve": "node ./bin/session-steward.mjs",
+    "check": "node ./bin/session-steward-cli.mjs --json --limit 5",
+    "test": "node --test test/providers/codex.test.mjs test/server.test.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^1.28.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.0.5",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.2.0"
+  }
+}

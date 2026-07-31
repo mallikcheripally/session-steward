@@ -1,0 +1,6 @@
+node_modules/
+.npm-cache/
+.DS_Store
+.idea/
+coverage/
+*.tgz
