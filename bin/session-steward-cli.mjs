@@ -2,7 +2,11 @@
 
 import { parseArgs } from "node:util";
 
-import { runCli } from "../lib/cli.mjs";
+import { assertSupportedNode } from "../lib/runtime.mjs";
+
+assertSupportedNode();
+
+const { runCli } = await import("../lib/cli.mjs");
 
 const { values } = parseArgs({
   allowPositionals: false,

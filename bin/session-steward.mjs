@@ -3,7 +3,11 @@
 import { parseArgs } from "node:util";
 import { spawn } from "node:child_process";
 
-import { startLocalServer } from "../lib/server.mjs";
+import { assertSupportedNode } from "../lib/runtime.mjs";
+
+assertSupportedNode();
+
+const { startLocalServer } = await import("../lib/server.mjs");
 
 const { values } = parseArgs({
   options: {

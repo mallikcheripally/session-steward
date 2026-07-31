@@ -37,9 +37,6 @@ const age = (timestamp) => {
       : `${Math.floor(minutes / 1440)}d ago`;
 };
 
-const isSupportingRecord = (record) => record.displayName
-  .startsWith("The following is the Codex agent history whose request action you are assessing");
-
 function getPageNumbers(currentPage, pageCount) {
   const start = Math.max(1, Math.min(currentPage - Math.floor(MAX_PAGE_LINKS / 2), pageCount - MAX_PAGE_LINKS + 1));
   const end = Math.min(pageCount, start + MAX_PAGE_LINKS - 1);
@@ -48,6 +45,8 @@ function getPageNumbers(currentPage, pageCount) {
 
 function App() {
   const [records, setRecords] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [pages, setPages] = useState(1);
   const [selected, setSelected] = useState(new Set());
   const [inspected, setInspected] = useState(null);
   const [search, setSearch] = useState("");
@@ -66,24 +65,36 @@ function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const compatibilityRef = useRef(null);
+  const loadSequence = useRef(0);
 
   const load = async ({ showRefreshNotice = false } = {}) => {
+    const sequence = ++loadSequence.current;
+
     try {
       if (showRefreshNotice) setIsRefreshing(true);
-      const params = new URLSearchParams({ search, sort, includeInternals: String(internals) });
+      const params = new URLSearchParams({
+        includeInternals: String(internals),
+        includeSupporting: String(supporting),
+        page: String(page),
+        pageSize: String(PAGE_SIZE),
+        search,
+        sort,
+      });
       const [result, diagnostic] = await Promise.all([
         api(`/api/sessions?${params}`),
-        api("/api/compatibility"),
+        showRefreshNotice ? api("/api/compatibility") : Promise.resolve(null),
       ]);
+      if (sequence !== loadSequence.current) return;
       setRecords(result.records);
-      setCompatibility(diagnostic);
-      setSelected((current) => new Set([...current].filter((id) => result.records.some((record) => record.id === id))));
-      setPage(1);
+      setTotal(result.total);
+      setPages(result.pageCount);
+      if (result.page !== page) setPage(result.page);
+      if (diagnostic) setCompatibility(diagnostic);
       if (showRefreshNotice) setNotice({ kind: "success", text: "Session list refreshed." });
     } catch (issue) {
-      setError(issue.message);
+      if (sequence === loadSequence.current) setError(issue.message);
     } finally {
-      if (showRefreshNotice) setIsRefreshing(false);
+      if (showRefreshNotice && sequence === loadSequence.current) setIsRefreshing(false);
     }
   };
 
@@ -92,9 +103,12 @@ function App() {
     api("/api/compatibility").then(setCompatibility).catch((issue) => setError(issue.message));
   }, []);
   useEffect(() => {
+    setPage(1);
+  }, [search, sort, internals, supporting]);
+  useEffect(() => {
     const timer = setTimeout(load, 120);
     return () => clearTimeout(timer);
-  }, [search, sort, internals]);
+  }, [search, sort, internals, supporting, page]);
   useEffect(() => {
     if (!showCompatibilityDetails) return undefined;
     const dismiss = (event) => {
@@ -109,17 +123,8 @@ function App() {
     };
   }, [showCompatibilityDetails]);
 
-  const filteredRecords = useMemo(
-    () => supporting ? records : records.filter((record) => !isSupportingRecord(record)),
-    [records, supporting],
-  );
-  const pages = Math.max(1, Math.ceil(filteredRecords.length / PAGE_SIZE));
-  const visible = useMemo(
-    () => filteredRecords.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [filteredRecords, page],
-  );
   const pageNumbers = useMemo(() => getPageNumbers(page, pages), [page, pages]);
-  const allMatchingSelected = filteredRecords.length > 0 && filteredRecords.every((record) => selected.has(record.id));
+  const allPageSelected = records.length > 0 && records.every((record) => selected.has(record.id));
 
   const inspect = async (id) => {
     try {
@@ -176,12 +181,12 @@ function App() {
     return next;
   });
 
-  const toggleAllMatching = () => setSelected((current) => {
+  const togglePage = () => setSelected((current) => {
     const next = new Set(current);
-    if (allMatchingSelected) {
-      filteredRecords.forEach((record) => next.delete(record.id));
+    if (allPageSelected) {
+      records.forEach((record) => next.delete(record.id));
     } else {
-      filteredRecords.forEach((record) => next.add(record.id));
+      records.forEach((record) => next.add(record.id));
     }
     return next;
   });
@@ -199,10 +204,10 @@ function App() {
       <div className="mt-6 flex flex-col gap-2 text-sm text-zinc-300"><label className="flex cursor-pointer items-center gap-2"><input checked={internals} onChange={(event) => setInternals(event.target.checked)} type="checkbox" className="size-4 accent-emerald-500"/> Show subagents</label><label className="flex cursor-pointer items-center gap-2"><input checked={supporting} onChange={(event) => setSupporting(event.target.checked)} type="checkbox" className="size-4 accent-emerald-500"/> Include supporting threads</label></div>
     </section>
     <section className="grid gap-5 lg:grid-cols-[minmax(0,1.8fr)_360px]"><div className="overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/70">
-      <div className="flex items-center justify-between border-b border-white/10 p-4"><p className="font-semibold">{filteredRecords.length} sessions <span className="font-normal text-zinc-500">· {selected.size} selected</span></p><button disabled={!selected.size} onClick={openDeleteDialog} className="button danger"><Trash2 size={16}/> Delete</button></div>
+      <div className="flex items-center justify-between border-b border-white/10 p-4"><p className="font-semibold">{total} sessions <span className="font-normal text-zinc-500">· {selected.size} selected</span></p><button disabled={!selected.size} onClick={openDeleteDialog} className="button danger"><Trash2 size={16}/> Delete</button></div>
       <Pagination page={page} pages={pages} numbers={pageNumbers} setPage={setPage}/>
-      <div className="flex items-center border-b border-white/5 px-4 py-3"><label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-zinc-200"><input checked={allMatchingSelected} onChange={toggleAllMatching} disabled={!filteredRecords.length} type="checkbox" className="size-4 accent-emerald-500"/>{allMatchingSelected ? "Unselect all" : "Select all"}<span className="font-normal text-zinc-500">matching sessions</span></label></div>
-      <div className="divide-y divide-white/5">{visible.map((record) => <label key={record.id} className={`group grid cursor-pointer grid-cols-[20px_minmax(0,1fr)_auto] gap-2 p-4 transition hover:bg-white/[.035] ${inspected?.id === record.id ? "bg-emerald-500/[.06]" : ""}`}><input checked={selected.has(record.id)} onChange={() => toggle(record.id)} type="checkbox" className="mt-1 size-4 accent-emerald-500"/><button onClick={(event) => { event.preventDefault(); toggle(record.id); inspect(record.id); }} className="relative -top-0.5 min-w-0 text-left"><p className="truncate font-medium text-zinc-100">{record.displayName}</p><p className="mt-1 truncate text-xs text-zinc-500"><FolderKanban className="mr-1 inline size-3"/>{record.cwd || "No workspace"}</p></button><div className="flex flex-col items-end gap-2"><span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[11px] font-medium text-emerald-200">{age(record.updatedAtMs)}</span><span className="text-[11px] text-zinc-500">{record.isSubagent ? "Subagent" : record.isPinned ? "Pinned" : record.archived ? "Archived" : "Session"}</span></div></label>)}{!visible.length && <p className="p-8 text-center text-sm text-zinc-500">No sessions match this view.</p>}</div>
+      <div className="flex items-center border-b border-white/5 px-4 py-3"><label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-zinc-200"><input checked={allPageSelected} onChange={togglePage} disabled={!records.length} type="checkbox" className="size-4 accent-emerald-500"/>{allPageSelected ? "Unselect page" : "Select page"}</label></div>
+      <div className="divide-y divide-white/5">{records.map((record) => <label key={record.id} className={`group grid cursor-pointer grid-cols-[20px_minmax(0,1fr)_auto] gap-2 p-4 transition hover:bg-white/[.035] ${inspected?.id === record.id ? "bg-emerald-500/[.06]" : ""}`}><input checked={selected.has(record.id)} onChange={() => toggle(record.id)} type="checkbox" className="mt-1 size-4 accent-emerald-500"/><button onClick={(event) => { event.preventDefault(); toggle(record.id); inspect(record.id); }} className="relative -top-0.5 min-w-0 text-left"><p className="truncate font-medium text-zinc-100">{record.displayName}</p><p className="mt-1 truncate text-xs text-zinc-500"><FolderKanban className="mr-1 inline size-3"/>{record.cwd || "No workspace"}</p></button><div className="flex flex-col items-end gap-2"><span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[11px] font-medium text-emerald-200">{age(record.updatedAtMs)}</span><span className="text-[11px] text-zinc-500">{record.isSubagent ? "Subagent" : record.isPinned ? "Pinned" : record.archived ? "Archived" : "Session"}</span></div></label>)}{!records.length && <p className="p-8 text-center text-sm text-zinc-500">No sessions match this view.</p>}</div>
       <Pagination page={page} pages={pages} numbers={pageNumbers} setPage={setPage}/>
     </div>
     <aside className="rounded-2xl border border-white/10 bg-zinc-900/70 p-5"><p className="mb-3 text-xs font-semibold tracking-[.16em] text-emerald-400">INSPECT</p>{inspected ? <><h2 className="break-words text-lg font-semibold">{inspected.displayName}</h2><dl className="mt-5 space-y-4 text-sm"><Detail label="Workspace" value={inspected.cwd || "Not recorded"}/><Detail label="Transcript" value={inspected.rolloutMissing ? "Missing" : "Available"}/><Detail label="Relationship" value={inspected.isSubagent ? "Subagent" : inspected.isFork ? "Fork" : "Primary session"}/><Detail label="Linked subagents" value={String(inspected.childThreadIds.length)}/><Detail label="Metadata source" value={inspected.titleSource}/></dl></> : <><h2 className="text-lg font-semibold">Select a session</h2><p className="mt-2 text-sm leading-6 text-zinc-500">Its local ownership details appear here before you plan a deletion.</p></>}</aside></section>

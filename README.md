@@ -17,8 +17,7 @@ Close selected Codex sessions before deleting them. Session Steward cannot yet t
 The npm package has not been published yet. To run this checkout on macOS or Linux, install:
 
 - Git
-- Node.js 20.11 or newer
-- SQLite 3
+- Node.js 24.15 or newer
 
 Then run:
 
@@ -62,6 +61,7 @@ Authentication, settings, plugins, caches, project files, worktrees, and unrelat
 
 ```bash
 npm test
+npm run benchmark:scale
 npm run build
 npm pack --dry-run --cache .npm-cache
 ```

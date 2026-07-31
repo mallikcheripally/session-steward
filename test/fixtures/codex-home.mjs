@@ -1,7 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 export const fixtureSessionIds = Object.freeze({
   child: "22222222-2222-4222-8222-222222222222",
@@ -14,10 +14,13 @@ function sqlValue(value) {
 }
 
 function createDatabase(databasePath, sql) {
-  execFileSync("sqlite3", [databasePath], {
-    input: sql,
-    stdio: ["pipe", "ignore", "pipe"],
-  });
+  const database = new DatabaseSync(databasePath);
+
+  try {
+    database.exec(sql);
+  } finally {
+    database.close();
+  }
 }
 
 function transcriptHeader({ cwd, id, parentThreadId = null }) {
@@ -196,4 +199,47 @@ export async function createCodexHomeFixture({ includeUnknownDatabase = false } 
 
 export async function removeCodexHomeFixture(codexHome) {
   await fs.rm(codexHome, { force: true, recursive: true });
+}
+
+export async function createLargeCodexHomeFixture({ sessionCount = 12_000 } = {}) {
+  const fixture = await createCodexHomeFixture();
+  const database = new DatabaseSync(path.join(fixture.codexHome, "state_5.sqlite"));
+
+  try {
+    database.exec("begin immediate");
+    const insert = database.prepare(`
+      insert into threads (
+        id, rollout_path, cwd, title, first_user_message,
+        agent_nickname, agent_role, archived, is_pinned,
+        created_at, updated_at, created_at_ms, updated_at_ms
+      ) values (?, null, ?, ?, ?, null, null, 0, 0, ?, ?, ?, ?)
+    `);
+
+    for (let index = 0; index < sessionCount; index += 1) {
+      const suffix = String(index).padStart(6, "0");
+      const timestamp = 1_751_000_000_000 + index;
+      insert.run(
+        `scale-${suffix}`,
+        fixture.workspace,
+        `Scale session ${suffix}`,
+        `Scale session ${suffix}`,
+        Math.floor(timestamp / 1000),
+        Math.floor(timestamp / 1000),
+        timestamp,
+        timestamp,
+      );
+    }
+
+    database.exec("commit");
+  } catch (error) {
+    if (database.isTransaction) database.exec("rollback");
+    throw error;
+  } finally {
+    database.close();
+  }
+
+  return {
+    ...fixture,
+    sessionCount,
+  };
 }
