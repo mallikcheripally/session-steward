@@ -9,15 +9,36 @@ import { findAvailableUpdate, formatUpdateNotice } from "../lib/update-check.mjs
 
 assertSupportedNode();
 
-const { startLocalServer } = await import("../lib/server.mjs");
-
 const { values } = parseArgs({
+  allowPositionals: false,
   options: {
     "codex-home": { type: "string" },
+    help: { short: "h", type: "boolean" },
     "no-open": { type: "boolean", default: false },
     port: { type: "string" },
+    version: { short: "v", type: "boolean" },
   },
 });
+
+if (values.help) {
+  process.stdout.write(`Usage: session-steward [options]
+
+Options:
+  --codex-home <path>  Use a custom Codex session folder
+  --port <number>      Use a specific local port
+  --no-open            Start without opening a browser
+  -h, --help           Show this help
+  -v, --version        Show the installed version
+`);
+  process.exit(0);
+}
+
+if (values.version) {
+  process.stdout.write(`${packageMetadata.version}\n`);
+  process.exit(0);
+}
+
+const { startLocalServer } = await import("../lib/server.mjs");
 const port = values.port === undefined ? 0 : Number.parseInt(values.port, 10);
 const availableUpdate = await findAvailableUpdate({ packageMetadata });
 
