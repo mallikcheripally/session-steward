@@ -60,6 +60,9 @@ jobs:
       - name: Benchmark session listing
         run: npm run benchmark:scale
 
+      - name: Benchmark overview and filters
+        run: npm run benchmark:overview
+
       - name: Benchmark metadata discovery
         run: npm run benchmark:discovery
 

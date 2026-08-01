@@ -128,10 +128,11 @@ test("the local server exposes the UI and synthetic Codex sessions", async (cont
   });
 
   const baseUrl = `http://127.0.0.1:${server.port}`;
-  const [healthResponse, pageResponse, sessionsResponse] = await Promise.all([
+  const [healthResponse, pageResponse, sessionsResponse, overviewResponse] = await Promise.all([
     fetch(`${baseUrl}/health`),
     fetch(baseUrl),
     fetch(`${baseUrl}/api/sessions`),
+    fetch(`${baseUrl}/api/session-overview`),
   ]);
 
   assert.deepEqual(await healthResponse.json(), { status: "ok" });
@@ -143,6 +144,18 @@ test("the local server exposes the UI and synthetic Codex sessions", async (cont
   assert.equal(sessions.pageCount, 1);
   assert.equal(sessions.pageSize, 25);
   assert.ok(sessions.records.every(({ providerId }) => providerId === "codex"));
+  const { overview } = await overviewResponse.json();
+  assert.equal(overview.sessionCount, 3);
+  assert.equal(overview.activeSessionCount, 2);
+  assert.equal(overview.archivedSessionCount, 1);
+  assert.equal(overview.primarySessionCount, 2);
+  assert.equal(overview.subagentCount, 1);
+  assert.equal(overview.transcriptFileCount, 3);
+  assert.equal(overview.transcriptBytes > 0, true);
+  assert.deepEqual(
+    overview.workspaces.map(({ path: workspacePath, sessionCount }) => [workspacePath, sessionCount]),
+    [[fixture.workspace, 3]],
+  );
 });
 
 test("cleanup requests require the local authorization token", async (context) => {
@@ -359,6 +372,191 @@ test("the sessions API returns one requested page", async (context) => {
   assert.equal(result.records.length, 25);
 });
 
+test("the sessions API filters inactive sessions and exact workspaces", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const database = new DatabaseSync(path.join(fixture.codexHome, "state_5.sqlite"));
+  const now = Date.now();
+  const otherWorkspace = "/tmp/session-steward/another project";
+  try {
+    const update = database.prepare("update threads set cwd = ?, updated_at = ?, updated_at_ms = ? where id = ?");
+    update.run(fixture.workspace, Math.floor((now - 100 * 86_400_000) / 1000), now - 100 * 86_400_000, fixtureSessionIds.parent);
+    update.run(fixture.workspace, Math.floor((now - 10 * 86_400_000) / 1000), now - 10 * 86_400_000, fixtureSessionIds.child);
+    update.run(otherWorkspace, Math.floor((now - 70 * 86_400_000) / 1000), now - 70 * 86_400_000, fixtureSessionIds.standalone);
+  } finally {
+    database.close();
+  }
+
+  const server = await startLocalServer({ codexHome: fixture.codexHome, port: 0 });
+  context.after(async () => {
+    await server.close();
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+
+  const inactiveResponse = await fetch(
+    `${baseUrl}/api/sessions?inactiveDays=60&includeInternals=true&includeSupporting=true`,
+  );
+  const inactive = await inactiveResponse.json();
+  assert.equal(inactiveResponse.status, 200);
+  assert.deepEqual(
+    inactive.records.map(({ id }) => id).sort(),
+    [fixtureSessionIds.parent, fixtureSessionIds.standalone].sort(),
+  );
+
+  const workspaceResponse = await fetch(
+    `${baseUrl}/api/sessions?includeInternals=true&includeSupporting=true&workspace=${encodeURIComponent(otherWorkspace)}`,
+  );
+  const workspace = await workspaceResponse.json();
+  assert.equal(workspaceResponse.status, 200);
+  assert.deepEqual(workspace.records.map(({ id }) => id), [fixtureSessionIds.standalone]);
+
+  const archivedResponse = await fetch(
+    `${baseUrl}/api/sessions?archiveStatus=archived&includeInternals=true&includeSupporting=true`,
+  );
+  const archived = await archivedResponse.json();
+  assert.equal(archivedResponse.status, 200);
+  assert.deepEqual(archived.records.map(({ id }) => id), [fixtureSessionIds.standalone]);
+
+  const invalidArchiveResponse = await fetch(`${baseUrl}/api/sessions?archiveStatus=old`);
+  assert.equal(invalidArchiveResponse.status, 400);
+  assert.deepEqual(await invalidArchiveResponse.json(), {
+    error: "Session status must be all, active, or archived.",
+  });
+
+  const invalidResponse = await fetch(`${baseUrl}/api/sessions?inactiveDays=45`);
+  assert.equal(invalidResponse.status, 400);
+  assert.deepEqual(await invalidResponse.json(), { error: "Last activity must be 30, 60, or 90 days." });
+
+  const malformedResponse = await fetch(`${baseUrl}/api/sessions?inactiveDays=30days`);
+  assert.equal(malformedResponse.status, 400);
+});
+
+test("the overview cache can be refreshed and is invalidated after cleanup", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const server = await startLocalServer({ codexHome: fixture.codexHome, port: 0 });
+  context.after(async () => {
+    await server.close();
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const readOverview = async (suffix = "") => {
+    const response = await fetch(`${baseUrl}/api/session-overview${suffix}`);
+    assert.equal(response.status, 200);
+    return (await response.json()).overview;
+  };
+
+  const initial = await readOverview();
+  await fs.appendFile(fixture.transcripts.standalone, "extra transcript bytes\n");
+  const cached = await readOverview();
+  assert.equal(cached.transcriptBytes, initial.transcriptBytes);
+
+  const refreshed = await readOverview("?refresh=true");
+  assert.equal(refreshed.transcriptBytes > initial.transcriptBytes, true);
+
+  const plan = await createDeletionPlan(baseUrl, [fixtureSessionIds.parent]);
+  const operation = await runDeletion(baseUrl, server.token, plan.id);
+  assert.equal(operation.status, "completed");
+  assert.equal(operation.backupDirectory, null);
+  assert.equal(operation.result.recoveryBackupDeleted, true);
+  assert.deepEqual(
+    await fs.readdir(path.join(fixture.codexHome, "session-steward-backups")),
+    [],
+  );
+  const afterCleanup = await readOverview();
+  assert.equal(afterCleanup.sessionCount, 1);
+  assert.equal(afterCleanup.subagentCount, 0);
+});
+
+test("failed cleanup backups can be deleted explicitly", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const logsDatabase = new DatabaseSync(path.join(fixture.codexHome, "logs_2.sqlite"));
+  try {
+    logsDatabase.exec(`
+      create trigger prevent_cleanup
+      before delete on logs
+      begin
+        select raise(abort, 'forced cleanup failure');
+      end;
+    `);
+  } finally {
+    logsDatabase.close();
+  }
+
+  const server = await startLocalServer({ codexHome: fixture.codexHome, port: 0 });
+  context.after(async () => {
+    await server.close();
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const plan = await createDeletionPlan(baseUrl, [fixtureSessionIds.parent]);
+  const failed = await runDeletion(baseUrl, server.token, plan.id);
+
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.canRestore, true);
+  assert.equal(failed.canDeleteBackup, true);
+  const backupDirectory = failed.backupDirectory;
+  await fs.access(backupDirectory);
+
+  const response = await fetch(`${baseUrl}/api/deletions/${encodeURIComponent(failed.id)}/backup`, {
+    headers: {
+      Origin: baseUrl,
+      "X-Session-Steward-Token": server.token,
+    },
+    method: "DELETE",
+  });
+  const { operation } = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(operation.backupDirectory, null);
+  assert.equal(operation.canRestore, false);
+  assert.equal(operation.canDeleteBackup, false);
+  await assert.rejects(fs.access(backupDirectory), { code: "ENOENT" });
+});
+
+test("restored cleanup backups are removed after recovery", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const logsDatabase = new DatabaseSync(path.join(fixture.codexHome, "logs_2.sqlite"));
+  try {
+    logsDatabase.exec(`
+      create trigger prevent_cleanup
+      before delete on logs
+      begin
+        select raise(abort, 'forced cleanup failure');
+      end;
+    `);
+  } finally {
+    logsDatabase.close();
+  }
+
+  const server = await startLocalServer({ codexHome: fixture.codexHome, port: 0 });
+  context.after(async () => {
+    await server.close();
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const plan = await createDeletionPlan(baseUrl, [fixtureSessionIds.parent]);
+  const failed = await runDeletion(baseUrl, server.token, plan.id);
+  assert.equal(failed.status, "failed");
+
+  const response = await fetch(`${baseUrl}/api/deletions/${encodeURIComponent(failed.id)}/restore`, {
+    headers: {
+      Origin: baseUrl,
+      "X-Session-Steward-Token": server.token,
+    },
+    method: "POST",
+  });
+  const body = await response.json();
+  assert.equal(response.status, 202, body.error);
+  const restored = await waitForOperation(baseUrl, body.operation);
+  assert.equal(restored.status, "restored");
+  assert.equal(restored.backupDirectory, null);
+  assert.equal(restored.canDeleteBackup, false);
+  assert.equal(restored.restoreResult.recoveryBackupsDeleted, true);
+  assert.deepEqual(
+    await fs.readdir(path.join(fixture.codexHome, "session-steward-backups")),
+    [],
+  );
+});
+
 test("deletion plans stay server-side and ignore unrelated session activity", async (context) => {
   const fixture = await createCodexHomeFixture();
   const server = await startLocalServer({ codexHome: fixture.codexHome, port: 0 });
@@ -371,6 +569,10 @@ test("deletion plans stay server-side and ignore unrelated session activity", as
 
   assert.equal(typeof plan.id, "string");
   assert.equal(plan.sessionCount, 2);
+  assert.equal(plan.transcriptCount, 2);
+  assert.equal(plan.transcriptBytes > 0, true);
+  assert.equal(plan.relatedRecordCount > 0, true);
+  assert.equal(plan.newestLinkedActivityAtMs, 1751367500000);
   assert.equal(Object.hasOwn(plan, "ids"), false);
   assert.equal(Object.hasOwn(plan, "records"), false);
   assert.equal(plan.recordSamples.length, 2);

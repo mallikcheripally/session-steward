@@ -11,12 +11,18 @@ const { runCli } = await import("../lib/cli.mjs");
 const { values } = parseArgs({
   allowPositionals: false,
   options: {
+    "archive-status": {
+      type: "string",
+    },
     "codex-home": {
       type: "string",
     },
     help: {
       short: "h",
       type: "boolean",
+    },
+    "inactive-days": {
+      type: "string",
     },
     "include-internals": {
       type: "boolean",
@@ -31,6 +37,9 @@ const { values } = parseArgs({
       type: "string",
     },
     sort: {
+      type: "string",
+    },
+    workspace: {
       type: "string",
     },
   },
@@ -54,13 +63,16 @@ async function main() {
   }
 
   await runCli({
+    archiveStatus: values["archive-status"],
     codexHome,
     help,
+    inactiveDays: values["inactive-days"],
     includeInternals: values["include-internals"] ?? false,
     json: values.json ?? false,
     limit: numericLimit,
     search: values.search ?? "",
     sort: values.sort ?? "updated",
+    workspace: values.workspace,
   });
 }
 

@@ -45,16 +45,17 @@ function transcriptHeader({ cwd, id, parentThreadId = null }) {
 export async function createCodexHomeFixture({ includeUnknownDatabase = false } = {}) {
   const codexHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-codex-"));
   const sessionsDirectory = path.join(codexHome, "sessions", "2026", "07", "01");
+  const archivedSessionsDirectory = path.join(codexHome, "archived_sessions");
   const workspace = path.join(codexHome, "workspace");
   await fs.mkdir(sessionsDirectory, { recursive: true });
+  await fs.mkdir(archivedSessionsDirectory, { recursive: true });
   await fs.mkdir(workspace, { recursive: true });
 
-  const transcripts = Object.fromEntries(
-    Object.entries(fixtureSessionIds).map(([name, id]) => [
-      name,
-      path.join(sessionsDirectory, `rollout-${name}-${id}.jsonl`),
-    ]),
-  );
+  const transcripts = {
+    child: path.join(sessionsDirectory, `rollout-child-${fixtureSessionIds.child}.jsonl`),
+    parent: path.join(sessionsDirectory, `rollout-parent-${fixtureSessionIds.parent}.jsonl`),
+    standalone: path.join(archivedSessionsDirectory, `rollout-standalone-${fixtureSessionIds.standalone}.jsonl`),
+  };
 
   await Promise.all([
     fs.writeFile(

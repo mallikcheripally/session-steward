@@ -1,36 +1,48 @@
 # Session Steward
 
-Safely review, back up, and remove local Codex sessions with a browser UI or terminal CLI.
+A local Codex session manager for safely reviewing, backing up, and deleting old sessions from a browser UI or terminal CLI.
 
-Session Steward is a local-first Codex session manager for macOS and Linux. It shows what will be removed before cleanup, creates a local backup, and verifies the result afterward. Your session data stays on your computer.
+Codex can accumulate hundreds of local sessions over time. A single session may leave behind a transcript, history and index entries, logs, and linked subagent records, so manual cleanup can easily miss related data.
 
-Use it to clear old Codex session history, reclaim the space used by session artifacts, or remove local session traces without resetting the rest of your Codex setup.
+Session Steward makes session cleanup safer by finding those records, showing what cleanup will affect, creating a local backup, removing supported data, and verifying the result afterward. Everything runs locally, and your session data stays on your computer.
 
-![UI of sessions, filters, and session details](https://raw.githubusercontent.com/mallikcheripally/session-steward/main/docs/session-steward-overview.jpg)
+![Session Steward cleanup demo](https://raw.githubusercontent.com/mallikcheripally/session-steward/main/docs/session-steward-demo.gif)
 
-## Why Session Steward
+## Manage and clean up local Codex sessions
 
-- Review local Codex sessions in a clear browser interface.
-- See linked subagents and affected local records before deletion.
-- Choose between focused session removal and a deeper local cleanup.
-- Keep an automatic backup of every cleanup operation.
-- Pause thorough cleanup when an unfamiliar storage format is found.
-- Verify that selected session artifacts were removed.
-- Use the same saved Codex folder in the browser and terminal interfaces.
+- Review sessions in a browser UI or terminal CLI.
+- See total sessions, subagents, supporting sessions, and transcript storage.
+- Find sessions inactive for 30, 60, or 90 days.
+- Filter active or archived sessions by workspace, name, or session ID.
+- Inspect linked sessions and affected records before deletion.
+- Choose standard or thorough cleanup.
+- Use a custom Codex folder across browser and terminal sessions.
 
-Session Steward does not delete conversations stored in your ChatGPT account.
+## Safe by default
 
-## Requirements
+- Cleanup happens entirely on your computer.
+- Only records included in the reviewed cleanup plan are removed.
+- A local recovery backup is created before anything changes.
+- Cleanup is verified before the backup is removed.
+- Unrecognized storage is reported and left untouched.
+- Thorough cleanup is unavailable when the detected storage format is not supported.
+- Session contents and other Codex data are never sent over the network.
 
-- macOS or Linux
-- [Node.js](https://nodejs.org/) 24.15 or newer
-- Local sessions created by Codex
+At startup, Session Steward may contact the public npm registry to check for a newer version.
 
-Git and a separate SQLite installation are not required. Session Steward uses the SQLite support included with Node.js.
+### Session Steward does not remove
 
-## Install
+- Codex sign-in data or saved API credentials
+- Configuration, plugins, caches, or custom prompt files
+- Project files, Git repositories, or worktrees
+- Sessions outside the reviewed cleanup plan
+- Conversations stored in your ChatGPT account
 
-Install Session Steward globally with npm:
+## Install and get started
+
+Session Steward supports macOS and Linux and requires Node.js 24.15 or newer. Git and a separate SQLite installation are not required.
+
+Install it globally:
 
 ```bash
 npm install --global session-steward
@@ -42,173 +54,159 @@ Then launch it:
 session-steward
 ```
 
-Session Steward opens its browser interface and listens only on `127.0.0.1`. It uses `~/.codex` by default.
-
-Keep the terminal open while using Session Steward. Press `Ctrl+C` when you want to stop it.
-
-To try it without a global installation:
+Or try it without installing:
 
 ```bash
 npx session-steward@latest
 ```
 
-## Quick start
+Session Steward opens in your browser, listens only on `127.0.0.1`, and uses `~/.codex` by default.
 
-1. Run `session-steward`.
-2. Review the detected Codex sessions.
-3. Select one or more sessions.
-4. Choose a cleanup option and review the deletion preview.
+To clean up sessions:
+
+1. Review the detected sessions.
+2. Select one or more sessions.
+3. Choose a cleanup option.
+4. Review exactly what will be removed.
 5. Close any selected sessions that may still be active.
 6. Confirm the cleanup.
 
-Each cleanup creates a backup inside your Codex folder under `session-steward-backups/`.
+Keep the terminal open while using Session Steward. Press `Ctrl+C` to stop it.
 
-## What you can adjust
-
-- Search by session name, workspace, or session ID.
-- Sort by recent activity, creation time, name, or workspace.
-- Show subagent and supporting sessions when you need the additional detail.
-- Choose standard or thorough cleanup for each deletion.
-- Change the Codex session folder and save that choice for later runs.
-
-## Safety model
-
-Session Steward is intentionally conservative:
-
-- All session inspection and cleanup happens on your computer.
-- Only recognized Codex storage is changed.
-- Unrecognized databases and changed storage layouts are reported but left untouched.
-- Thorough cleanup is paused when the local storage layout is not supported.
-- A backup is created before session data is changed.
-- Cleanup is checked afterward for remaining selected artifacts.
-- Authentication, plugins, caches, project files, worktrees, and unrelated sessions are not removed.
-
-At startup, Session Steward may contact the public npm registry to check for a newer release. It does not send session contents or other Codex data.
-
-Close selected Codex sessions before deleting them. Session Steward cannot currently determine whether a session is still being written to.
-
-## Cleanup options
+## Cleanup and recovery
 
 ### Standard cleanup
 
-Recommended for routine session removal. It removes the selected session registry entries, transcripts, history entries, session-index entries, logs, and linked subagents.
+Recommended for routine session removal. It removes supported registry entries, transcripts, history and index entries, logs, and linked subagents belonging to the selected sessions.
 
 ### Thorough cleanup
 
-Choose this when you also want supported local references and generated records removed. It includes everything in standard cleanup, plus recognized ChatGPT Desktop references, memory outputs, and goal records.
+Includes standard cleanup and also removes supported local references and generated records, including recognized ChatGPT Desktop references, memory outputs, and goal records.
 
-Thorough cleanup remains unavailable when Session Steward finds storage it does not recognize. Standard cleanup stays available for the supported records it can identify safely.
+Thorough cleanup is unavailable when Session Steward finds storage it does not recognize. Standard cleanup remains available for supported records that can be identified safely.
 
-## Backups and recovery
+### Recovery backups
 
-Completed cleanups keep their recovery backup on disk. If cleanup encounters a problem after creating its backup, Session Steward offers a guided restore from the cleanup progress screen.
+A temporary backup is created inside your Codex folder under `session-steward-backups/`.
 
-Before restoring, Session Steward saves the current versions of the affected files in a separate safety folder. This gives you a second recovery point if the restore itself is interrupted.
+After cleanup is successfully verified, the backup is removed automatically. If cleanup fails, Session Steward keeps the backup and lets you restore the sessions, keep the backup, or delete it.
 
-## Use a custom Codex home folder
+Before restoring, the current versions of affected files are saved separately to provide another recovery point.
 
-The browser interface shows the active Codex session folder. Choose **Change folder** to select another existing Codex folder and remember it for future browser and terminal sessions.
+## Terminal CLI
 
-For a one-time folder override:
-
-```bash
-session-steward --codex-home /path/to/.codex
-```
-
-The command-line override applies only to that run and does not replace the saved folder.
-
-Saved settings are stored at:
-
-- macOS: `~/Library/Application Support/session-steward/config.json`
-- Linux: `$XDG_CONFIG_HOME/session-steward/config.json`, or `~/.config/session-steward/config.json` when `XDG_CONFIG_HOME` is not set
-
-## Terminal interface
-
-For an interactive terminal workflow:
+Start the interactive terminal interface:
 
 ```bash
 session-steward-cli
 ```
 
-To inspect a small JSON result without opening the browser:
+List sessions as JSON:
 
 ```bash
 session-steward-cli --json --limit 10
 ```
 
-Run `session-steward-cli --help` for all available options. The terminal interface uses the same saved Codex folder as the browser interface.
+Find sessions inactive for at least 60 days:
 
-## Common commands
+```bash
+session-steward-cli --inactive-days 60
+```
 
-Start without opening a browser:
+Show only archived sessions:
+
+```bash
+session-steward-cli --archive-status archived
+```
+
+Show sessions from one exact workspace:
+
+```bash
+session-steward-cli --workspace /path/to/project
+```
+
+The interactive terminal accepts the same filters:
+
+```text
+inactive 30
+inactive 60
+inactive 90
+archive active
+archive archived
+workspace /path/to/project
+```
+
+Run `inactive`, `archive`, or `workspace` without a value to clear that filter.
+
+Use `session-steward-cli --help` to see all available options.
+
+## Use a custom Codex folder
+
+The browser interface displays the active Codex session folder. Select **Change folder** to choose another existing Codex folder and remember it for later browser and terminal sessions.
+
+For a one-time override:
+
+```bash
+session-steward --codex-home /path/to/.codex
+```
+
+The command-line override applies only to that run and does not replace your saved folder.
+
+## Other commands
+
+Start without automatically opening the browser:
 
 ```bash
 session-steward --no-open
 ```
 
-Update to the latest release:
+Update Session Steward:
 
 ```bash
 npm install --global session-steward@latest
 ```
 
-Uninstall Session Steward:
+Uninstall it:
 
 ```bash
 npm uninstall --global session-steward
 ```
 
-Uninstalling the package does not remove your Codex sessions, Session Steward backups, or saved folder preference.
+Uninstalling Session Steward does not remove Codex sessions, recovery backups, or your saved folder preference.
 
 ## Troubleshooting
 
-### The browser did not open
-
-Run `session-steward --no-open`, then open the local address printed in the terminal.
-
-### No sessions were found
-
-Confirm that the displayed Codex folder contains your local session data. Use **Change folder** or pass `--codex-home` for a one-time override.
-
-### Thorough cleanup is unavailable
-
-Open the compatibility details in Session Steward. New or changed local storage is left untouched until that format is supported. You can still use standard cleanup when its recognized records are supported.
-
-### Node.js is too old
-
-Install Node.js 24.15 or newer, then run `session-steward` again.
+- **The browser did not open:** Run `session-steward --no-open`, then open the local address shown in the terminal.
+- **No sessions were found:** Check the displayed Codex folder. Use **Change folder** or pass `--codex-home` for a one-time override.
+- **Thorough cleanup is unavailable:** Review the compatibility details. Unrecognized storage is left untouched, but standard cleanup may still be available.
+- **Your Node.js version is too old:** Install Node.js 24.15 or newer and run Session Steward again.
 
 ## Development
-
-Clone the repository and install its dependencies:
 
 ```bash
 git clone https://github.com/mallikcheripally/session-steward.git
 cd session-steward
 npm install
+npm test
+npm run build
 ```
 
-Useful commands:
+Scale benchmarks are also available:
 
 ```bash
-npm start
-npm test
 npm run benchmark:scale
+npm run benchmark:overview
 npm run benchmark:discovery
 npm run benchmark:transcripts
-npm run build
-npm pack --dry-run --cache .npm-cache
 ```
 
-Tests use temporary synthetic Codex data. They do not read or change your local Codex sessions.
-
-## Roadmap
-
-Codex is supported today. Claude Code is planned as the next provider integration.
+Tests and benchmarks use temporary synthetic Codex data. They do not read or modify your local sessions.
 
 ## Support
 
-Use [GitHub Issues](https://github.com/mallikcheripally/session-steward/issues) to report a bug, request a provider, or share a storage format that Session Steward does not yet recognize.
+Codex is supported today. Claude Code support is planned.
+
+Use [GitHub Issues](https://github.com/mallikcheripally/session-steward/issues) to report a bug, request a provider, or share a storage format that Session Steward does not recognize.
 
 Session Steward is an independent project and is not affiliated with or endorsed by OpenAI.
 

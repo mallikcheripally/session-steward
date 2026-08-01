@@ -1,7 +1,7 @@
 {
   "name": "session-steward",
-  "version": "0.1.1",
-  "description": "Safely review, back up, and remove local Codex sessions with a browser UI or terminal CLI.",
+  "version": "0.2.0",
+  "description": "A local Codex session manager for safely reviewing and deleting old sessions with a browser UI or terminal CLI.",
   "license": "MIT",
   "author": "Mallik Cheripally",
   "type": "module",
@@ -18,23 +18,24 @@
   "keywords": [
     "codex",
     "codex-cli",
-    "codex-sessions",
     "openai-codex",
-    "openai",
-    "chatgpt",
+    "codex-sessions",
+    "codex-session-manager",
+    "codex-session-cleanup",
+    "codex-cleanup",
+    "codex-history",
+    "delete-codex-sessions",
     "session-manager",
     "session-cleanup",
+    "chatgpt-desktop",
+    "chatgpt-history",
     "ai-coding-agent",
-    "cli",
-    "backup",
-    "privacy",
-    "local-first"
+    "chatgpt-app-cleanup"
   ],
   "os": ["darwin", "linux"],
   "files": [
     "bin",
     "dist",
-    "docs",
     "lib",
     "LICENSE",
     "README.md"
@@ -48,6 +49,7 @@
   "scripts": {
     "build": "vite build",
     "benchmark:discovery": "node --expose-gc test/benchmarks/codex-discovery.mjs",
+    "benchmark:overview": "node --expose-gc test/benchmarks/codex-overview.mjs",
     "benchmark:scale": "node --expose-gc test/benchmarks/codex-list.mjs",
     "benchmark:transcripts": "node --expose-gc test/benchmarks/codex-transcripts.mjs",
     "prepack": "npm run build",

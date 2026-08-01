@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ import { createProviderSettings } from "../lib/settings.mjs";
 import {
   createCodexHomeFixture,
   createLargeCodexHomeFixture,
+  fixtureSessionIds,
   removeCodexHomeFixture,
 } from "./fixtures/codex-home.mjs";
 
@@ -68,4 +70,88 @@ test("help does not read provider settings", async (context) => {
 
   const output = await runCli(["--help"], unusableConfigHome);
   assert.match(output, /^Usage: session-steward-cli/u);
+  assert.match(output, /--archive-status <status>/u);
+  assert.match(output, /--inactive-days <30\|60\|90>/u);
+  assert.match(output, /--workspace <path>/u);
+});
+
+test("the terminal CLI filters inactive sessions by exact workspace", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-filters-"));
+  const otherWorkspace = path.join(fixture.codexHome, "another workspace");
+  const database = new DatabaseSync(path.join(fixture.codexHome, "state_5.sqlite"));
+  const now = Date.now();
+
+  try {
+    const update = database.prepare("update threads set cwd = ?, updated_at = ?, updated_at_ms = ? where id = ?");
+    update.run(fixture.workspace, Math.floor(now / 1000), now, fixtureSessionIds.parent);
+    const oldTimestamp = now - 100 * 24 * 60 * 60 * 1000;
+    update.run(otherWorkspace, Math.floor(oldTimestamp / 1000), oldTimestamp, fixtureSessionIds.standalone);
+  } finally {
+    database.close();
+  }
+
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+
+  const sessions = JSON.parse(await runCli([
+    "--codex-home",
+    fixture.codexHome,
+    "--json",
+    "--include-internals",
+    "--inactive-days",
+    "90",
+    "--workspace",
+    otherWorkspace,
+  ], xdgConfigHome));
+
+  assert.deepEqual(sessions.map(({ id }) => id), [fixtureSessionIds.standalone]);
+
+  await assert.rejects(
+    runCli([
+      "--codex-home",
+      fixture.codexHome,
+      "--json",
+      "--inactive-days",
+      "45",
+    ], xdgConfigHome),
+    (error) => error.stderr === "Inactive days must be 30, 60, or 90.\n",
+  );
+});
+
+test("the terminal CLI filters archived sessions", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-archive-"));
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+
+  const sessions = JSON.parse(await runCli([
+    "--codex-home",
+    fixture.codexHome,
+    "--json",
+    "--include-internals",
+    "--archive-status",
+    "archived",
+  ], xdgConfigHome));
+
+  assert.deepEqual(sessions.map(({ id }) => id), [fixtureSessionIds.standalone]);
+
+  await assert.rejects(
+    runCli([
+      "--codex-home",
+      fixture.codexHome,
+      "--json",
+      "--archive-status",
+      "old",
+    ], xdgConfigHome),
+    (error) => error.stderr === "Archive status must be all, active, or archived.\n",
+  );
 });

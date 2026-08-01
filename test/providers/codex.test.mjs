@@ -32,6 +32,36 @@ test("Codex discovery preserves relationships and readable names", async (contex
   assert.deepEqual(parent.childThreadIds, [fixtureSessionIds.child]);
   assert.equal(child.parentThreadId, fixtureSessionIds.parent);
   assert.equal(child.isSubagent, true);
+  const archived = store.recordsById.get(fixtureSessionIds.standalone);
+  assert.equal(archived.archived, true);
+  assert.equal(archived.rolloutMissing, false);
+  assert.match(archived.rolloutPath, /archived_sessions/u);
+});
+
+test("Codex cleanup backs up and removes archived transcripts", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.standalone],
+  });
+  const plan = await codex.planSessionDeletion({
+    recordIds: [fixtureSessionIds.standalone],
+    store,
+  });
+
+  assert.equal(plan.records[0].archived, true);
+  assert.deepEqual(plan.transcriptPaths, [fixture.transcripts.standalone]);
+  const result = await codex.executeSessionDeletion({ plan, scope: "core", store });
+  const verification = await codex.verifySessionDeletion({ plan, scope: "core", store });
+
+  assert.equal(verification.complete, true);
+  await assert.rejects(access(fixture.transcripts.standalone), { code: "ENOENT" });
+  await access(path.join(
+    result.backupDirectory,
+    "transcripts",
+    path.basename(fixture.transcripts.standalone),
+  ));
 });
 
 test("Codex plans cascade from parent to child but not child to parent", async (context) => {
@@ -48,6 +78,16 @@ test("Codex plans cascade from parent to child but not child to parent", async (
     fixtureSessionIds.child,
   ]));
   assert.equal(parentPlan.childCount, 1);
+  assert.equal(
+    parentPlan.newestLinkedActivityAtMs,
+    store.recordsById.get(fixtureSessionIds.child).updatedAtMs,
+  );
+  const transcriptBytes = (await Promise.all([
+    readFile(fixture.transcripts.parent),
+    readFile(fixture.transcripts.child),
+  ])).reduce((total, contents) => total + contents.length, 0);
+  assert.equal(parentPlan.transcriptFileCount, 2);
+  assert.equal(parentPlan.transcriptBytes, transcriptBytes);
 
   const childPlan = await codex.planSessionDeletion({
     recordIds: [fixtureSessionIds.child],
@@ -55,6 +95,7 @@ test("Codex plans cascade from parent to child but not child to parent", async (
   });
   assert.deepEqual(childPlan.ids, [fixtureSessionIds.child]);
   assert.equal(childPlan.childCount, 0);
+  assert.equal(childPlan.newestLinkedActivityAtMs, 0);
 });
 
 test("Codex cleanup cascades to transcript-only subagents", async (context) => {
@@ -179,6 +220,11 @@ test("deep cleanup backs up, removes, and verifies only the selected family", as
 
   const remainingStore = await codex.loadSessionStore({ codexHome: fixture.codexHome });
   assert.deepEqual(remainingStore.records.map(({ id }) => id), [fixtureSessionIds.standalone]);
+  await codex.deleteSessionDeletionBackup({
+    backupDirectory: result.backupDirectory,
+    codexHome: fixture.codexHome,
+  });
+  await assert.rejects(access(result.backupDirectory), { code: "ENOENT" });
 });
 
 test("cleanup cancellation stops at a safe boundary", async (context) => {

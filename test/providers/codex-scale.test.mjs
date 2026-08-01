@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { access, stat, truncate } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { getProvider } from "../../lib/providers/index.mjs";
@@ -43,6 +44,113 @@ test("Codex listing stays bounded for a large session collection", async (contex
     false,
   );
   assert.ok(JSON.stringify(firstPage).length < 50_000);
+});
+
+test("overview and server-side filters stay aligned with Codex metadata", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const otherWorkspace = path.join(fixture.codexHome, "workspace with 'quote'");
+  const supportingPrefix = "The following is the Codex agent history whose request action you are assessing";
+  const database = new DatabaseSync(path.join(fixture.codexHome, "state_5.sqlite"));
+
+  try {
+    database.prepare(`
+      update threads
+      set cwd = ?, title = ?, first_user_message = ?
+      where id = ?
+    `).run(
+      otherWorkspace,
+      `${supportingPrefix}: package review`,
+      `${supportingPrefix}: package review`,
+      fixtureSessionIds.standalone,
+    );
+  } finally {
+    database.close();
+  }
+
+  const expectedTranscriptBytes = (await Promise.all(
+    Object.values(fixture.transcripts).map((transcriptPath) => stat(transcriptPath)),
+  )).reduce((totalBytes, stats) => totalBytes + stats.size, 0);
+  const overview = await codex.getSessionOverview({ codexHome: fixture.codexHome });
+
+  assert.equal(overview.sessionCount, 3);
+  assert.equal(overview.activeSessionCount, 2);
+  assert.equal(overview.archivedSessionCount, 1);
+  assert.equal(overview.primarySessionCount, 1);
+  assert.equal(overview.subagentCount, 1);
+  assert.equal(overview.supportingCount, 1);
+  assert.equal(overview.unknownActivityCount, 0);
+  assert.equal(overview.transcriptFileCount, 3);
+  assert.equal(overview.transcriptBytes, expectedTranscriptBytes);
+  assert.deepEqual(
+    new Map(overview.workspaces.map(({ path: workspacePath, sessionCount }) => [workspacePath, sessionCount])),
+    new Map([[fixture.workspace, 2], [otherWorkspace, 1]]),
+  );
+
+  const inactive = await codex.listSessions({
+    codexHome: fixture.codexHome,
+    inactiveBeforeMs: 1_751_367_500_000,
+    includeInternals: true,
+    includeSupporting: true,
+  });
+  assert.deepEqual(
+    inactive.records.map(({ id }) => id),
+    [fixtureSessionIds.child, fixtureSessionIds.standalone],
+  );
+
+  const workspaceResult = await codex.listSessions({
+    codexHome: fixture.codexHome,
+    includeInternals: true,
+    includeSupporting: true,
+    workspace: otherWorkspace,
+  });
+  assert.deepEqual(workspaceResult.records.map(({ id }) => id), [fixtureSessionIds.standalone]);
+
+  const archived = await codex.listSessions({
+    archiveStatus: "archived",
+    codexHome: fixture.codexHome,
+    includeInternals: true,
+    includeSupporting: true,
+  });
+  assert.deepEqual(archived.records.map(({ id }) => id), [fixtureSessionIds.standalone]);
+
+  const active = await codex.listSessions({
+    archiveStatus: "active",
+    codexHome: fixture.codexHome,
+    includeInternals: true,
+    includeSupporting: true,
+  });
+  assert.deepEqual(
+    new Set(active.records.map(({ id }) => id)),
+    new Set([fixtureSessionIds.parent, fixtureSessionIds.child]),
+  );
+});
+
+test("sessions without activity are not treated as inactive", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const database = new DatabaseSync(path.join(fixture.codexHome, "state_5.sqlite"));
+
+  try {
+    database.prepare(`
+      update threads
+      set created_at = null, updated_at = null, created_at_ms = null, updated_at_ms = null
+      where id = ?
+    `).run(fixtureSessionIds.standalone);
+  } finally {
+    database.close();
+  }
+
+  const overview = await codex.getSessionOverview({ codexHome: fixture.codexHome });
+  const inactive = await codex.listSessions({
+    codexHome: fixture.codexHome,
+    inactiveBeforeMs: Number.MAX_SAFE_INTEGER,
+    includeInternals: true,
+    includeSupporting: true,
+  });
+
+  assert.equal(overview.unknownActivityCount, 1);
+  assert.equal(inactive.records.some(({ id }) => id === fixtureSessionIds.standalone), false);
 });
 
 test("cleanup loads only the selected family from a large collection", async (context) => {
