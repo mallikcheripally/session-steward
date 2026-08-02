@@ -79,6 +79,33 @@ select:focus-visible {
   padding: 0 .15rem .8rem;
 }
 
+.provider-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 10px;
+  background: rgba(255,255,255,.025);
+}
+
+.provider-switch button {
+  min-height: 30px;
+  padding: 0 .75rem;
+  border-radius: 7px;
+  color: rgb(115 115 115);
+  font-size: .75rem;
+  font-weight: 600;
+  transition: color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+
+.provider-switch button:hover { color: rgb(212 212 212); }
+
+.provider-switch button[aria-pressed="true"] {
+  color: rgb(245 245 245);
+  background: rgba(255,255,255,.075);
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+
 .provider-context-editing {
   margin-right: 0;
   margin-left: 0;

@@ -15,6 +15,7 @@ import {
   fixtureSessionIds,
   removeCodexHomeFixture,
 } from "./fixtures/codex-home.mjs";
+import { createClaudeHomeFixture, removeClaudeHomeFixture } from "./fixtures/claude-home.mjs";
 
 const executeFile = promisify(execFile);
 const repositoryRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -73,6 +74,25 @@ test("help does not read provider settings", async (context) => {
   assert.match(output, /--archive-status <status>/u);
   assert.match(output, /--inactive-days <30\|60\|90>/u);
   assert.match(output, /--workspace <path>/u);
+  assert.match(output, /--provider <codex\|claude-code>/u);
+});
+
+test("the terminal CLI lists Claude Code sessions from a one-time home", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-claude-"));
+  context.after(async () => {
+    await Promise.all([
+      removeClaudeHomeFixture(fixture),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+  const sessions = JSON.parse(await runCli([
+    "--provider", "claude-code",
+    "--claude-home", fixture.claudeHome,
+    "--json",
+  ], xdgConfigHome));
+  assert.deepEqual(sessions.map(({ id }) => id).sort(), [fixture.cliId, fixture.unrelatedId].sort());
+  assert.ok(sessions.every(({ providerId }) => providerId === "claude-code"));
 });
 
 test("the terminal CLI filters inactive sessions by exact workspace", async (context) => {

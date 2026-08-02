@@ -1,7 +1,7 @@
 {
   "name": "session-steward",
-  "version": "0.2.0",
-  "description": "A local Codex session manager for safely reviewing and deleting old sessions with a browser UI or terminal CLI.",
+  "version": "0.3.0",
+  "description": "A local Codex and Claude Code session manager for safely reviewing and deleting old sessions.",
   "license": "MIT",
   "author": "Mallik Cheripally",
   "type": "module",
@@ -17,6 +17,9 @@
   "bugs": "https://github.com/mallikcheripally/session-steward/issues",
   "keywords": [
     "codex",
+    "claude-code",
+    "claude-code-sessions",
+    "claude-desktop",
     "codex-cli",
     "openai-codex",
     "codex-sessions",
@@ -27,6 +30,7 @@
     "delete-codex-sessions",
     "session-manager",
     "session-cleanup",
+    "ai-session-manager",
     "chatgpt-desktop",
     "chatgpt-history",
     "ai-coding-agent",

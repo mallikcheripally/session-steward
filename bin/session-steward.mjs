@@ -13,6 +13,7 @@ const { values } = parseArgs({
   allowPositionals: false,
   options: {
     "codex-home": { type: "string" },
+    "claude-home": { type: "string" },
     help: { short: "h", type: "boolean" },
     "no-open": { type: "boolean", default: false },
     port: { type: "string" },
@@ -25,6 +26,7 @@ if (values.help) {
 
 Options:
   --codex-home <path>  Use a custom Codex session folder
+  --claude-home <path> Use a custom Claude session folder
   --port <number>      Use a specific local port
   --no-open            Start without opening a browser
   -h, --help           Show this help
@@ -47,6 +49,7 @@ if (availableUpdate) {
 }
 
 const server = await startLocalServer({
+  claudeHome: values["claude-home"],
   codexHome: values["codex-home"],
   port,
 });

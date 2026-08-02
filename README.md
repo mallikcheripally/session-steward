@@ -1,22 +1,23 @@
 # Session Steward
 
-A local Codex session manager for safely reviewing, backing up, and deleting old sessions from a browser UI or terminal CLI.
+A local Codex and Claude Code session manager for safely reviewing, backing up, and deleting old sessions from a browser UI or terminal CLI.
 
-Codex can accumulate hundreds of local sessions over time. A single session may leave behind a transcript, history and index entries, logs, and linked subagent records, so manual cleanup can easily miss related data.
+AI coding tools can accumulate hundreds or thousands of local sessions. A session may leave behind transcripts, history, logs, checkpoints, and linked artifacts, so manual cleanup can easily miss related data.
 
 Session Steward makes session cleanup safer by finding those records, showing what cleanup will affect, creating a local backup, removing supported data, and verifying the result afterward. Everything runs locally, and your session data stays on your computer.
 
 ![Session Steward cleanup demo](https://raw.githubusercontent.com/mallikcheripally/session-steward/main/docs/session-steward-demo.gif)
 
-## Manage and clean up local Codex sessions
+## Manage local Codex and Claude Code sessions
 
 - Review sessions in a browser UI or terminal CLI.
-- See total sessions, subagents, supporting sessions, and transcript storage.
+- Switch between Codex and Claude Code without installing another package.
+- See session counts and the storage used by recognized session files.
 - Find sessions inactive for 30, 60, or 90 days.
 - Filter active or archived sessions by workspace, name, or session ID.
-- Inspect linked sessions and affected records before deletion.
+- Inspect session details and affected records before deletion.
 - Choose standard or thorough cleanup.
-- Use a custom Codex folder across browser and terminal sessions.
+- Use custom Codex or Claude home folders across browser and terminal sessions.
 
 ## Safe by default
 
@@ -26,17 +27,18 @@ Session Steward makes session cleanup safer by finding those records, showing wh
 - Cleanup is verified before the backup is removed.
 - Unrecognized storage is reported and left untouched.
 - Thorough cleanup is unavailable when the detected storage format is not supported.
-- Session contents and other Codex data are never sent over the network.
+- Session contents are never sent over the network.
 
 At startup, Session Steward may contact the public npm registry to check for a newer version.
 
 ### Session Steward does not remove
 
-- Codex sign-in data or saved API credentials
+- Sign-in data or saved API credentials
 - Configuration, plugins, caches, or custom prompt files
 - Project files, Git repositories, or worktrees
 - Sessions outside the reviewed cleanup plan
-- Conversations stored in your ChatGPT account
+- Conversations stored in your ChatGPT or Claude account
+- Claude Code worktrees, branches, repositories, remote sessions, SSH sessions, or Cowork data
 
 ## Install and get started
 
@@ -60,7 +62,7 @@ Or try it without installing:
 npx session-steward@latest
 ```
 
-Session Steward opens in your browser, listens only on `127.0.0.1`, and uses `~/.codex` by default.
+Session Steward opens in your browser, listens only on `127.0.0.1`, and detects `~/.codex` and `~/.claude` by default. Claude Desktop sessions are detected on macOS; Claude Code CLI sessions work on macOS and Linux.
 
 To clean up sessions:
 
@@ -77,17 +79,17 @@ Keep the terminal open while using Session Steward. Press `Ctrl+C` to stop it.
 
 ### Standard cleanup
 
-Recommended for routine session removal. It removes supported registry entries, transcripts, history and index entries, logs, and linked subagents belonging to the selected sessions.
+Recommended for routine removal. It removes supported transcripts, history, registry entries, logs, and linked session artifacts belonging to the selected sessions.
 
 ### Thorough cleanup
 
-Includes standard cleanup and also removes supported local references and generated records, including recognized ChatGPT Desktop references, memory outputs, and goal records.
+Includes standard cleanup and removes additional recognized session-owned data. For Codex this can include supported Desktop references, memory outputs, and goal records. For Claude Code this includes recognized file checkpoints.
 
 Thorough cleanup is unavailable when Session Steward finds storage it does not recognize. Standard cleanup remains available for supported records that can be identified safely.
 
 ### Recovery backups
 
-A temporary backup is created inside your Codex folder under `session-steward-backups/`.
+A temporary backup is created inside the active provider folder under `session-steward-backups/`.
 
 After cleanup is successfully verified, the backup is removed automatically. If cleanup fails, Session Steward keeps the backup and lets you restore the sessions, keep the backup, or delete it.
 
@@ -99,6 +101,12 @@ Start the interactive terminal interface:
 
 ```bash
 session-steward-cli
+```
+
+Use Claude Code instead of Codex:
+
+```bash
+session-steward-cli --provider claude-code
 ```
 
 List sessions as JSON:
@@ -140,14 +148,20 @@ Run `inactive`, `archive`, or `workspace` without a value to clear that filter.
 
 Use `session-steward-cli --help` to see all available options.
 
-## Use a custom Codex folder
+## Use a custom provider folder
 
-The browser interface displays the active Codex session folder. Select **Change folder** to choose another existing Codex folder and remember it for later browser and terminal sessions.
+The browser interface displays the active provider folder. Select **Change** to choose another existing folder and remember it for later browser and terminal sessions.
 
 For a one-time override:
 
 ```bash
 session-steward --codex-home /path/to/.codex
+```
+
+For Claude Code:
+
+```bash
+session-steward --claude-home /path/to/.claude
 ```
 
 The command-line override applies only to that run and does not replace your saved folder.
@@ -172,12 +186,12 @@ Uninstall it:
 npm uninstall --global session-steward
 ```
 
-Uninstalling Session Steward does not remove Codex sessions, recovery backups, or your saved folder preference.
+Uninstalling Session Steward does not remove provider sessions, recovery backups, or saved folder preferences.
 
 ## Troubleshooting
 
 - **The browser did not open:** Run `session-steward --no-open`, then open the local address shown in the terminal.
-- **No sessions were found:** Check the displayed Codex folder. Use **Change folder** or pass `--codex-home` for a one-time override.
+- **No sessions were found:** Check the selected provider and displayed home folder. Use **Change** or pass a one-time home-folder override.
 - **Thorough cleanup is unavailable:** Review the compatibility details. Unrecognized storage is left untouched, but standard cleanup may still be available.
 - **Your Node.js version is too old:** Install Node.js 24.15 or newer and run Session Steward again.
 
@@ -200,15 +214,15 @@ npm run benchmark:discovery
 npm run benchmark:transcripts
 ```
 
-Tests and benchmarks use temporary synthetic Codex data. They do not read or modify your local sessions.
+Tests and benchmarks use temporary synthetic session data. They do not read or modify your local sessions.
 
 ## Support
 
-Codex is supported today. Claude Code support is planned.
+Codex, Claude Code CLI, and local Claude Code Desktop sessions are supported. Claude Desktop archive is not treated as deletion, and Session Steward never removes its worktrees.
 
 Use [GitHub Issues](https://github.com/mallikcheripally/session-steward/issues) to report a bug, request a provider, or share a storage format that Session Steward does not recognize.
 
-Session Steward is an independent project and is not affiliated with or endorsed by OpenAI.
+Session Steward is an independent project and is not affiliated with or endorsed by OpenAI or Anthropic.
 
 ## License
 

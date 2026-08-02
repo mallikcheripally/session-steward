@@ -17,6 +17,9 @@ const { values } = parseArgs({
     "codex-home": {
       type: "string",
     },
+    "claude-home": {
+      type: "string",
+    },
     help: {
       short: "h",
       type: "boolean",
@@ -31,6 +34,9 @@ const { values } = parseArgs({
       type: "boolean",
     },
     limit: {
+      type: "string",
+    },
+    provider: {
       type: "string",
     },
     search: {
@@ -52,24 +58,28 @@ const numericLimit =
 
 async function main() {
   const help = values.help ?? false;
-  let codexHome = values["codex-home"];
+  const providerId = values.provider || "codex";
+  if (!["codex", "claude-code"].includes(providerId)) throw new Error("Provider must be codex or claude-code.");
+  const homeOption = providerId === "codex" ? values["codex-home"] : values["claude-home"];
+  let providerHome = homeOption;
 
   if (!help) {
     const { createProviderSettings } = await import("../lib/settings.mjs");
     const settings = await createProviderSettings({
-      providerHomeOverrides: codexHome === undefined ? {} : { codex: codexHome },
+      providerHomeOverrides: providerHome === undefined ? {} : { [providerId]: providerHome },
     });
-    codexHome = settings.getHome("codex");
+    providerHome = settings.getHome(providerId);
   }
 
   await runCli({
     archiveStatus: values["archive-status"],
-    codexHome,
     help,
     inactiveDays: values["inactive-days"],
     includeInternals: values["include-internals"] ?? false,
     json: values.json ?? false,
     limit: numericLimit,
+    providerHome,
+    providerId,
     search: values.search ?? "",
     sort: values.sort ?? "updated",
     workspace: values.workspace,

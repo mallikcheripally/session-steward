@@ -15,7 +15,7 @@ import {
 const codex = getProvider("codex");
 
 test("the provider registry exposes Codex explicitly", () => {
-  assert.deepEqual(listProviders().map(({ id }) => id), ["codex"]);
+  assert.ok(listProviders().map(({ id }) => id).includes("codex"));
   assert.equal(codex.displayName, "Codex");
 });
 

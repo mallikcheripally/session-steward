@@ -14,6 +14,7 @@ import {
   fixtureSessionIds,
   removeCodexHomeFixture,
 } from "./fixtures/codex-home.mjs";
+import { createClaudeHomeFixture, removeClaudeHomeFixture } from "./fixtures/claude-home.mjs";
 
 function startSlowDeletion({ baseUrl, bodyStart, token }) {
   let request;
@@ -40,9 +41,9 @@ function startSlowDeletion({ baseUrl, bodyStart, token }) {
   return { request, response };
 }
 
-async function createDeletionPlan(baseUrl, ids, scope = "core") {
+async function createDeletionPlan(baseUrl, ids, scope = "core", providerId = "codex") {
   const response = await fetch(`${baseUrl}/api/deletion-plans`, {
-    body: JSON.stringify({ ids, scope }),
+    body: JSON.stringify({ ids, providerId, scope }),
     headers: { "Content-Type": "application/json" },
     method: "POST",
   });
@@ -50,6 +51,30 @@ async function createDeletionPlan(baseUrl, ids, scope = "core") {
   assert.equal(response.status, 200, body.error);
   return body.plan;
 }
+
+test("the local server routes Claude Code sessions through the selected provider", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  const server = await startLocalServer({ claudeHome: fixture.claudeHome, port: 0 });
+  context.after(async () => {
+    await server.close().catch(() => {});
+    await removeClaudeHomeFixture(fixture);
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const config = await fetch(`${baseUrl}/api/config`).then((response) => response.json());
+  assert.equal(config.providers["claude-code"].home, fixture.claudeHome);
+  const sessions = await fetch(`${baseUrl}/api/sessions?provider=claude-code`).then((response) => response.json());
+  assert.equal(sessions.total, 2);
+  assert.ok(sessions.records.every((record) => record.providerId === "claude-code"));
+  const overview = await fetch(`${baseUrl}/api/session-overview?provider=claude-code`).then((response) => response.json());
+  assert.equal(overview.overview.cliSessionCount, 2);
+  const plan = await createDeletionPlan(baseUrl, [fixture.cliId], "core", "claude-code");
+  assert.equal(plan.sessionCount, 1);
+  assert.ok(plan.transcriptCount >= 3);
+  const operation = await runDeletion(baseUrl, config.mutationToken, plan.id);
+  assert.equal(operation.status, "completed");
+  await assert.rejects(fs.access(fixture.cliTranscript), { code: "ENOENT" });
+  assert.equal((await fs.stat(fixture.unrelatedTranscript)).isFile(), true);
+});
 
 async function waitForOperation(baseUrl, operation) {
   let current = operation;

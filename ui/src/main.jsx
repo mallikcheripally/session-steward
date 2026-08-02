@@ -96,6 +96,9 @@ function getPageNumbers(currentPage, pageCount) {
 }
 
 function getSessionKind(record) {
+  if (record.providerId === "claude-code") return record.surface === "desktop"
+    ? { icon: Bot, label: "Desktop" }
+    : { icon: Database, label: "CLI" };
   if (record.isSubagent) return { icon: Bot, label: "Subagent" };
   if (record.isFork) return { icon: GitBranch, label: "Fork" };
   if (record.isPinned) return { icon: Pin, label: "Pinned" };
@@ -103,6 +106,8 @@ function getSessionKind(record) {
 }
 
 function App() {
+  const [activeProviderId, setActiveProviderId] = useState("codex");
+  const [providers, setProviders] = useState({});
   const [records, setRecords] = useState([]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
@@ -142,7 +147,7 @@ function App() {
   const loadSequence = useRef(0);
   const loadController = useRef(null);
 
-  const load = async ({ queryOverrides = {} } = {}) => {
+  const load = async ({ providerId = activeProviderId, queryOverrides = {} } = {}) => {
     const sequence = ++loadSequence.current;
     loadController.current?.abort();
     const controller = new AbortController();
@@ -170,6 +175,8 @@ function App() {
         pageSize: String(PAGE_SIZE),
         search: query.search,
         sort: query.sort,
+        provider: providerId,
+        refresh: String(Boolean(query.refresh)),
       });
       if (query.inactiveDays) params.set("inactiveDays", query.inactiveDays);
       if (query.workspace !== ALL_WORKSPACES) params.set("workspace", query.workspace);
@@ -188,12 +195,13 @@ function App() {
     }
   };
 
-  const loadOverview = async ({ refresh = false } = {}) => {
+  const loadOverview = async ({ providerId = activeProviderId, refresh = false } = {}) => {
     try {
       setIsOverviewLoading(true);
       setOverviewError("");
-      const suffix = refresh ? "?refresh=true" : "";
-      setOverview((await api(`/api/session-overview${suffix}`)).overview);
+      const suffix = new URLSearchParams({ provider: providerId });
+      if (refresh) suffix.set("refresh", "true");
+      setOverview((await api(`/api/session-overview?${suffix}`)).overview);
     } catch {
       setOverviewError("Overview unavailable");
     } finally {
@@ -206,8 +214,8 @@ function App() {
       setIsRefreshing(true);
       setError("");
       const [diagnostic] = await Promise.all([
-        api("/api/compatibility"),
-        load(),
+        api(`/api/compatibility?provider=${encodeURIComponent(activeProviderId)}`),
+        load({ queryOverrides: { refresh: true } }),
         loadOverview({ refresh: true }),
       ]);
       setCompatibility(diagnostic);
@@ -219,12 +227,13 @@ function App() {
   };
 
   useEffect(() => {
-    api("/api/config").then(({ mutationToken, providers }) => {
+    api("/api/config").then(({ mutationToken, providers: availableProviders }) => {
       setToken(mutationToken);
-      setProviderSettings(providers.codex);
-      setProviderHomeDraft(providers.codex.home);
+      setProviders(availableProviders);
+      setProviderSettings(availableProviders.codex);
+      setProviderHomeDraft(availableProviders.codex.home);
     }).catch((issue) => setError(issue.message));
-    api("/api/compatibility").then(setCompatibility).catch((issue) => setError(issue.message));
+    api("/api/compatibility?provider=codex").then(setCompatibility).catch((issue) => setError(issue.message));
     loadOverview();
   }, []);
 
@@ -240,7 +249,7 @@ function App() {
   useEffect(() => {
     const timer = setTimeout(load, 120);
     return () => clearTimeout(timer);
-  }, [search, sort, internals, supporting, inactiveDays, archiveStatus, workspace, page]);
+  }, [activeProviderId, search, sort, internals, supporting, inactiveDays, archiveStatus, workspace, page]);
 
   useEffect(() => {
     if (!showCompatibilityDetails) return undefined;
@@ -286,7 +295,7 @@ function App() {
 
   const inspect = async (id) => {
     try {
-      setInspected((await api(`/api/sessions/${encodeURIComponent(id)}`)).record);
+      setInspected((await api(`/api/sessions/${encodeURIComponent(id)}?provider=${encodeURIComponent(activeProviderId)}`)).record);
       setError("");
     } catch (issue) {
       setError(issue.message);
@@ -300,7 +309,7 @@ function App() {
       setPlanNotice("");
       const result = await api("/api/deletion-plans", {
         method: "POST",
-        body: JSON.stringify({ ids: [...selected], scope: nextScope }),
+        body: JSON.stringify({ ids: [...selected], providerId: activeProviderId, scope: nextScope }),
       });
       setPlan(result.plan);
       setOperation(null);
@@ -443,6 +452,7 @@ function App() {
   };
 
   const finishProviderHomeChange = async (provider, message) => {
+    setProviders((current) => ({ ...current, [activeProviderId]: provider }));
     setProviderSettings(provider);
     setProviderHomeDraft(provider.home);
     setEditingProviderHome(false);
@@ -459,7 +469,7 @@ function App() {
     setArchiveStatus("all");
     setWorkspace(ALL_WORKSPACES);
     const [diagnostic] = await Promise.all([
-      api("/api/compatibility"),
+      api(`/api/compatibility?provider=${encodeURIComponent(activeProviderId)}`),
       load({
         queryOverrides: {
           archiveStatus: "all",
@@ -482,12 +492,12 @@ function App() {
     try {
       setIsSavingProviderHome(true);
       setError("");
-      const { provider } = await api("/api/settings/providers/codex", {
+      const { provider } = await api(`/api/settings/providers/${encodeURIComponent(activeProviderId)}`, {
         method: "PUT",
         headers: { "X-Session-Steward-Token": token },
         body: JSON.stringify({ home: providerHomeDraft }),
       });
-      await finishProviderHomeChange(provider, "Codex session folder updated.");
+      await finishProviderHomeChange(provider, `${provider.displayName} session folder updated.`);
     } catch (issue) {
       setError(issue.message);
     } finally {
@@ -499,11 +509,11 @@ function App() {
     try {
       setIsSavingProviderHome(true);
       setError("");
-      const { provider } = await api("/api/settings/providers/codex", {
+      const { provider } = await api(`/api/settings/providers/${encodeURIComponent(activeProviderId)}`, {
         method: "DELETE",
         headers: { "X-Session-Steward-Token": token },
       });
-      await finishProviderHomeChange(provider, "Using the default Codex session folder.");
+      await finishProviderHomeChange(provider, `Using the default ${provider.displayName} session folder.`);
     } catch (issue) {
       setError(issue.message);
     } finally {
@@ -524,17 +534,53 @@ function App() {
     return next;
   });
 
+  const switchProvider = async (providerId) => {
+    if (providerId === activeProviderId || isDeleting || isPlanning) return;
+    const provider = providers[providerId];
+    setActiveProviderId(providerId);
+    setProviderSettings(provider);
+    setProviderHomeDraft(provider.home);
+    setEditingProviderHome(false);
+    setSelected(new Set());
+    setInspected(null);
+    setPlan(null);
+    setOperation(null);
+    setDialog(false);
+    setPage(1);
+    setSearch("");
+    setInternals(false);
+    setSupporting(false);
+    setInactiveDays("");
+    setArchiveStatus("all");
+    setWorkspace(ALL_WORKSPACES);
+    setOverview(null);
+    setCompatibility(null);
+    try {
+      const [diagnostic] = await Promise.all([
+        api(`/api/compatibility?provider=${encodeURIComponent(providerId)}`),
+        load({ providerId, queryOverrides: { archiveStatus: "all", inactiveDays: "", internals: false, page: 1, search: "", supporting: false, workspace: ALL_WORKSPACES } }),
+        loadOverview({ providerId, refresh: true }),
+      ]);
+      setCompatibility(diagnostic);
+    } catch (issue) {
+      setError(issue.message);
+    }
+  };
+
+  const activeProviderName = providerSettings?.displayName || "Codex";
+
   return <main className="app-shell min-h-screen text-neutral-100">
     <div className="relative mx-auto max-w-[1380px] px-4 py-5 sm:px-6 sm:py-8 lg:px-8">
       <header className="mb-5 flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
         <div className="flex items-center gap-3.5">
           <div className="brand-mark"><ShieldCheck size={23}/></div>
           <div>
-            <p className="mb-1 text-xs font-medium text-neutral-500">Local Codex session manager</p>
+            <p className="mb-1 text-xs font-medium text-neutral-500">Local AI coding session manager</p>
             <h1 className="text-2xl font-semibold tracking-[-.035em] text-white sm:text-[1.75rem]">Session Steward</h1>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <div className="provider-switch" aria-label="Session provider">{Object.entries(providers).map(([id, provider]) => <button key={id} type="button" disabled={isDeleting || isPlanning} aria-pressed={activeProviderId === id} onClick={() => switchProvider(id)}>{provider.displayName}</button>)}</div>
           <CompatibilityControl compatibilityRef={compatibilityRef} compatibility={compatibility} expanded={showCompatibilityDetails} onToggle={() => setShowCompatibilityDetails((current) => !current)} onClose={() => setShowCompatibilityDetails(false)}/>
           <button disabled={isRefreshing} onClick={refreshAll} className="button secondary"><RefreshCw size={15} className={isRefreshing ? "animate-spin" : undefined}/><span>{isRefreshing ? "Refreshing" : "Refresh"}</span></button>
         </div>
@@ -561,6 +607,7 @@ function App() {
         error={overviewError}
         loading={isOverviewLoading}
         overview={overview}
+        providerId={activeProviderId}
       />
 
       <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -582,6 +629,7 @@ function App() {
             inactiveDays={inactiveDays}
             internals={internals}
             overview={overview}
+            providerId={activeProviderId}
             search={search}
             setArchiveStatus={setArchiveStatus}
             setInactiveDays={setInactiveDays}
@@ -612,7 +660,7 @@ function App() {
           <Pagination page={page} pages={pages} numbers={pageNumbers} setPage={setPage}/>
         </div>
 
-        <Inspector onClose={() => setInspected(null)} record={inspected}/>
+        <Inspector onClose={() => setInspected(null)} providerName={activeProviderName} record={inspected}/>
       </section>
     </div>
 
@@ -629,6 +677,8 @@ function App() {
       planError={planError}
       planNotice={planNotice}
       scope={scope}
+      providerId={activeProviderId}
+      providerName={activeProviderName}
     />}
   </main>;
 }
@@ -651,16 +701,21 @@ function ProviderHomeControl({ editing, isSaving, onCancel, onChange, onEdit, on
   return <section className={`provider-context ${editing ? "provider-context-editing" : ""}`}>
     <div className="provider-context-row">
       <div className="provider-context-main">
-        <div className="provider-context-heading"><HardDrive size={14}/><span className="provider-context-label">Codex home folder</span><span className="source-badge">{sourceLabel}</span>{!editing && <div className="provider-context-actions"><button disabled={isSaving} onClick={onEdit} className="compact-action">Change</button>{!provider.isDefault && <button disabled={isSaving} onClick={onReset} className="compact-action">Use default</button>}</div>}</div>
+        <div className="provider-context-heading"><HardDrive size={14}/><span className="provider-context-label">{provider.homeLabel}</span><span className="source-badge">{sourceLabel}</span>{!editing && <div className="provider-context-actions"><button disabled={isSaving} onClick={onEdit} className="compact-action">Change</button>{!provider.isDefault && <button disabled={isSaving} onClick={onReset} className="compact-action">Use default</button>}</div>}</div>
         <code title={provider.home}>{provider.home}</code>
       </div>
     </div>
-    {editing && <form onSubmit={onSubmit} className="provider-context-form"><label className="field"><span>Folder path</span><input autoFocus required spellCheck="false" value={value} onChange={(event) => onChange(event.target.value)} placeholder="~/.codex"/></label><div className="mt-3 flex justify-end gap-2"><button type="button" disabled={isSaving} onClick={onCancel} className="button ghost">Cancel</button><button type="submit" disabled={isSaving || !value.trim()} className="button primary">{isSaving ? "Saving" : "Save folder"}</button></div></form>}
+    {editing && <form onSubmit={onSubmit} className="provider-context-form"><label className="field"><span>Folder path</span><input autoFocus required spellCheck="false" value={value} onChange={(event) => onChange(event.target.value)} placeholder={provider.homePlaceholder}/></label><div className="mt-3 flex justify-end gap-2"><button type="button" disabled={isSaving} onClick={onCancel} className="button ghost">Cancel</button><button type="submit" disabled={isSaving || !value.trim()} className="button primary">{isSaving ? "Saving" : "Save folder"}</button></div></form>}
   </section>;
 }
 
-function Overview({ error, loading, overview }) {
-  const metrics = [
+function Overview({ error, loading, overview, providerId }) {
+  const metrics = providerId === "claude-code" ? [
+    { icon: Database, label: "Total sessions", value: overview?.sessionCount.toLocaleString() },
+    { icon: FileText, label: "CLI sessions", value: overview?.cliSessionCount?.toLocaleString() },
+    { icon: Bot, label: "Desktop sessions", value: overview?.desktopSessionCount?.toLocaleString() },
+    { icon: HardDrive, label: "Session files size", value: overview ? fileSize(overview.transcriptBytes) : undefined },
+  ] : [
     {
       icon: Database,
       label: "Total sessions",
@@ -708,6 +763,7 @@ function Filters({
   inactiveDays,
   internals,
   overview,
+  providerId,
   search,
   setArchiveStatus,
   setInactiveDays,
@@ -731,7 +787,7 @@ function Filters({
       </div>
     </div>
     <div className="filter-footer">
-      <div className="flex flex-wrap gap-2"><Toggle checked={internals} onChange={setInternals}>Subagent sessions</Toggle><Toggle checked={supporting} onChange={setSupporting}>Supporting sessions</Toggle></div>
+      <div className="flex flex-wrap gap-2">{providerId === "codex" && <><Toggle checked={internals} onChange={setInternals}>Subagent sessions</Toggle><Toggle checked={supporting} onChange={setSupporting}>Supporting sessions</Toggle></>}</div>
       <div className="flex flex-wrap items-center justify-end gap-3">
         {inactiveDays && overview?.unknownActivityCount > 0 && <p className="max-w-xs text-right text-[11px] leading-4 text-neutral-500">{overview.unknownActivityCount.toLocaleString()} with unknown activity are not included.</p>}
         {filterCount > 0 && <button type="button" onClick={clearFilters} className="clear-filters"><X size={13}/> Clear filters <span>{filterCount}</span></button>}
@@ -770,11 +826,11 @@ function EmptyState({ hasActiveFilters, onClear }) {
   return <div className="grid min-h-[360px] place-items-center px-6 text-center"><div><div className="mx-auto grid size-11 place-items-center rounded-xl border border-white/[.08] bg-white/[.035] text-neutral-500"><Search size={19}/></div><h3 className="mt-4 text-sm font-semibold text-neutral-200">{hasActiveFilters ? "No sessions match these filters" : "No sessions found"}</h3><p className="mx-auto mt-1.5 max-w-sm text-xs leading-5 text-neutral-500">{hasActiveFilters ? "Adjust the filters to see more sessions." : "Session Steward did not find any sessions in this folder."}</p>{hasActiveFilters && <button type="button" onClick={onClear} className="button secondary mt-4">Clear filters</button>}</div></div>;
 }
 
-function Inspector({ onClose, record }) {
+function Inspector({ onClose, providerName, record }) {
   return <><button type="button" aria-label="Close session details" onClick={onClose} className={`inspector-backdrop ${record ? "inspector-backdrop-open" : ""}`}/><aside className={`surface inspector ${record ? "inspector-open" : ""}`}>
     <div className="flex items-center justify-between border-b border-white/[.07] px-5 py-4"><p className="eyebrow">Session details</p>{record && <button type="button" onClick={onClose} aria-label="Close session details" className="icon-button lg:hidden"><X size={16}/></button>}</div>
     {record
-      ? <div className="p-5"><div className="flex items-start gap-3"><div className="icon-tile"><FileText size={17}/></div><div className="min-w-0"><h2 className="break-words text-base font-normal leading-6 text-white">{record.displayName}</h2><p className="mt-1 break-all font-mono text-[10px] leading-4 text-neutral-600">{record.id}</p></div></div><dl className="mt-6 space-y-4"><Detail icon={Archive} label="Status" value={record.archived ? "Archived" : "Active"}/><Detail icon={FolderKanban} label="Workspace" value={record.cwd || "Not recorded"}/><Detail icon={Clock3} label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail icon={FileText} label="Transcript" value={record.rolloutMissing ? "Missing" : "Available"}/><Detail icon={GitBranch} label="Relationship" value={record.isSubagent ? "Subagent" : record.isFork ? "Fork" : "Primary session"}/><Detail icon={Database} label="Linked subagents" value={String(record.childThreadIds.length)}/></dl></div>
+      ? <div className="p-5"><div className="flex items-start gap-3"><div className="icon-tile"><FileText size={17}/></div><div className="min-w-0"><h2 className="break-words text-base font-normal leading-6 text-white">{record.displayName}</h2><p className="mt-1 break-all font-mono text-[10px] leading-4 text-neutral-600">{record.id}</p></div></div><dl className="mt-6 space-y-4"><Detail icon={Archive} label="Status" value={record.archived ? "Archived" : "Active"}/>{record.surface && <Detail icon={Bot} label="Used in" value={record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"}/>}<Detail icon={FolderKanban} label="Workspace" value={record.cwd || "Not recorded"}/><Detail icon={Clock3} label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail icon={FileText} label="Transcript" value={record.rolloutMissing ? "Missing" : "Available"}/><Detail icon={GitBranch} label="Relationship" value={record.isSubagent ? "Subagent" : record.isFork ? "Fork" : `Primary ${providerName} session`}/>{record.providerId === "codex" && <Detail icon={Database} label="Linked subagents" value={String(record.childThreadIds.length)}/>}</dl></div>
       : <div className="grid min-h-[340px] place-items-center p-7 text-center"><div><div className="mx-auto grid size-12 place-items-center rounded-2xl border border-white/[.08] bg-white/[.03] text-neutral-500"><Info size={20}/></div><h2 className="mt-4 text-sm font-semibold text-neutral-300">Select a session</h2><p className="mx-auto mt-2 max-w-[230px] text-xs leading-5 text-neutral-500">Its location, activity, and linked sessions will appear here.</p></div></div>}
   </aside></>;
 }
@@ -789,21 +845,22 @@ function Pagination({ page, pages, numbers, setPage }) {
 
 function CompatibilityControl({ compatibility, compatibilityRef, expanded, onToggle, onClose }) {
   if (!compatibility) return <div className="skeleton h-9 w-32 rounded-full"/>;
+  const providerName = compatibility.providerId === "claude-code" ? "Claude Code" : "Codex";
   const copy = compatibility.status === "ready"
-    ? { title: "Cleanup supported", text: "Session Steward recognizes this Codex data.", tone: "status-ready" }
+    ? { title: "Cleanup supported", text: `Session Steward recognizes this ${providerName} data.`, tone: "status-ready" }
     : compatibility.status === "newer-version"
-      ? { title: "Review needed", text: "New Codex session data was found and needs review.", tone: "status-warning" }
-      : { title: "Update needed", text: "Deep cleanup is paused because this Codex version stores session data differently.", tone: "status-error" };
+      ? { title: "Review needed", text: `New ${providerName} session data was found and needs review.`, tone: "status-warning" }
+      : { title: "Update needed", text: `Thorough cleanup is paused because this ${providerName} version stores session data differently.`, tone: "status-error" };
   const details = [...compatibility.missing, ...compatibility.changed, ...compatibility.newlyDiscovered];
 
-  return <div ref={compatibilityRef} className="relative"><button onClick={onToggle} aria-expanded={expanded} className={`status-pill ${copy.tone}`}><span/>{copy.title}</button>{expanded && <section className="compatibility-popover"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-white">Compatibility</p><p className="mt-1 text-xs leading-5 text-neutral-400">{copy.text}</p></div><button onClick={onClose} aria-label="Close compatibility details" className="icon-button"><X size={15}/></button></div><div className="mt-4 grid gap-2 border-t border-white/[.07] pt-4"><VersionRow label="ChatGPT" support={compatibility.versionSupport?.chatgptDesktop} value={compatibility.currentVersions.chatgptDesktop}/><VersionRow label="Codex" support={compatibility.versionSupport?.codexCli} value={compatibility.currentVersions.codexCli}/></div><p className="mt-3 text-xs leading-5 text-neutral-500">Cleanup is enabled only when Session Steward recognizes the relevant session data.</p><ul className="mt-3 space-y-1.5 text-xs leading-5 text-neutral-400">{details.length > 0 ? details.map((detail) => <li key={detail} className="flex gap-2"><span className="mt-2 size-1 shrink-0 rounded-full bg-amber-300"/>{detail}</li>) : <li className="flex gap-2 text-neutral-500"><Check size={13} className="mt-0.5 text-emerald-400"/>No unexpected session data was found.</li>}</ul></section>}</div>;
+  return <div ref={compatibilityRef} className="relative"><button onClick={onToggle} aria-expanded={expanded} className={`status-pill ${copy.tone}`}><span/>{copy.title}</button>{expanded && <section className="compatibility-popover"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-white">Compatibility</p><p className="mt-1 text-xs leading-5 text-neutral-400">{copy.text}</p></div><button onClick={onClose} aria-label="Close compatibility details" className="icon-button"><X size={15}/></button></div><div className="mt-4 grid gap-2 border-t border-white/[.07] pt-4">{compatibility.providerId === "claude-code" ? <><VersionRow label="Claude Code CLI" support={compatibility.versionSupport?.claudeCli} value={compatibility.currentVersions.claudeCli}/><VersionRow label="Claude Desktop" support={compatibility.versionSupport?.claudeDesktop} value={compatibility.currentVersions.claudeDesktop}/></> : <><VersionRow label="ChatGPT" support={compatibility.versionSupport?.chatgptDesktop} value={compatibility.currentVersions.chatgptDesktop}/><VersionRow label="Codex" support={compatibility.versionSupport?.codexCli} value={compatibility.currentVersions.codexCli}/></>}</div><p className="mt-3 text-xs leading-5 text-neutral-500">Cleanup is enabled only when Session Steward recognizes the relevant session data.</p><ul className="mt-3 space-y-1.5 text-xs leading-5 text-neutral-400">{details.length > 0 ? details.map((detail) => <li key={detail} className="flex gap-2"><span className="mt-2 size-1 shrink-0 rounded-full bg-amber-300"/>{detail}</li>) : <li className="flex gap-2 text-neutral-500"><Check size={13} className="mt-0.5 text-emerald-400"/>No unexpected session data was found.</li>}</ul></section>}</div>;
 }
 
 function VersionRow({ label, support, value }) {
   return <div className="flex items-center justify-between gap-4 rounded-lg bg-white/[.025] px-3 py-2.5"><div><p className="text-xs font-medium text-neutral-300">{label}</p><p className="mt-0.5 font-mono text-[11px] text-neutral-500">{value || "Not found"}</p></div><span className="text-right text-[11px] text-neutral-500">{versionStatus(support)}</span></div>;
 }
 
-function DeletionDialog({ isDeleting, onCancelCleanup, onClose, onDelete, onDeleteBackup, onRestore, onScopeChange, operation, plan, planError, planNotice, scope }) {
+function DeletionDialog({ isDeleting, onCancelCleanup, onClose, onDelete, onDeleteBackup, onRestore, onScopeChange, operation, plan, planError, planNotice, providerId, providerName, scope }) {
   const [confirmingRestore, setConfirmingRestore] = useState(false);
   const [confirmingBackupDelete, setConfirmingBackupDelete] = useState(false);
   const active = operation && ["queued", "running", "restoring"].includes(operation.status);
@@ -820,7 +877,7 @@ function DeletionDialog({ isDeleting, onCancelCleanup, onClose, onDelete, onDele
   const errorTone = needsAttention ? "text-amber-100" : "text-rose-200";
 
   return <div className="dialog-backdrop"><section role="dialog" aria-modal="true" aria-labelledby="delete-title" className="dialog-panel"><div className="flex items-start justify-between gap-4"><div><div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.16em] text-rose-300"><ShieldCheck size={13}/> Session cleanup</div><h2 id="delete-title" className="text-xl font-semibold tracking-tight text-white">{operation ? operation.message : "Review selected sessions"}</h2><p className="mt-1.5 text-sm leading-6 text-neutral-500">Session Steward creates a local backup before cleanup begins.</p></div><button disabled={active} onClick={onClose} aria-label="Close cleanup" className="icon-button"><X size={17}/></button></div>
-    {!operation && <div className="mt-5 grid gap-3 sm:grid-cols-2"><Scope checked={scope === "core"} disabled={isDeleting} title="Standard cleanup" text="Removes the sessions, transcripts, history, logs, and linked subagents." onClick={() => onScopeChange("core")}/><Scope checked={scope === "deep"} disabled={isDeleting} title="Thorough cleanup" text="Also removes supported Desktop references, saved memory, and goals." onClick={() => onScopeChange("deep")}/></div>}
+    {!operation && <div className="mt-5 grid gap-3 sm:grid-cols-2"><Scope checked={scope === "core"} disabled={isDeleting} title="Standard cleanup" text={providerId === "claude-code" ? "Removes the selected local sessions, transcripts, history, and linked session artifacts." : "Removes the sessions, transcripts, history, logs, and linked subagents."} onClick={() => onScopeChange("core")}/><Scope checked={scope === "deep"} disabled={isDeleting} title="Thorough cleanup" text={providerId === "claude-code" ? "Also removes recognized file checkpoints owned by these sessions. Worktrees are always kept." : "Also removes supported Desktop references, saved memory, and goals."} onClick={() => onScopeChange("deep")}/></div>}
     {planError && <div role="alert" className="mt-4 rounded-xl border border-rose-400/20 bg-rose-400/[.07] p-3 text-sm text-rose-100">{planError}</div>}
     {planNotice && <div role="status" className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/[.06] p-3 text-sm text-amber-100">{planNotice}</div>}
     {plan
@@ -828,10 +885,11 @@ function DeletionDialog({ isDeleting, onCancelCleanup, onClose, onDelete, onDele
       : <div className="mt-5 h-[76px] animate-pulse rounded-xl bg-white/[.025]"/>}
     {!operation && plan && <div className="mt-3 flex gap-2.5 text-xs leading-5 text-neutral-500"><HardDrive size={14} className="mt-0.5 shrink-0"/><p>About {fileSize(plan.estimatedBackupBytes)} of temporary free space is needed for a recovery backup. It is removed after cleanup is verified.</p></div>}
     {plan?.childCount > 0 && <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-neutral-400"><GitBranch size={13} className="mt-1 shrink-0 text-amber-300"/><span>{plan.childCount} linked {plan.childCount === 1 ? "session is" : "sessions are"} included.{plan.newestLinkedActivityAtMs ? ` Newest linked activity was ${age(plan.newestLinkedActivityAtMs)}.` : " Linked activity was not recorded."}</span></p>}
+    {plan?.warnings?.map((warning) => <p key={warning} className="mt-3 flex items-start gap-2 text-xs leading-5 text-amber-100"><AlertTriangle size={13} className="mt-1 shrink-0 text-amber-300"/><span>{warning}</span></p>)}
     {operation && <div className="mt-5 rounded-xl border border-white/[.08] bg-white/[.025] p-4"><div className="flex items-center justify-between gap-4 text-sm"><span role="status" aria-live="polite" aria-atomic="true" className="font-medium text-neutral-300">{operation.message}</span><span className="tabular-nums text-neutral-500">{progress}%</span></div><div role="progressbar" aria-label="Cleanup progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress} aria-valuetext={operation.message} className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[.07]"><div className={`h-full rounded-full transition-all ${progressTone}`} style={{ width: `${progress}%` }}/></div>{operation.error && <p className={`mt-3 text-xs leading-5 ${errorTone}`}>{operation.error}</p>}{operation.backupDeleteError && <p className="mt-3 text-xs leading-5 text-amber-100">{operation.backupDeleteError}</p>}{operation.canRestore && <div className="mt-3 space-y-2 text-xs leading-5 text-neutral-400"><p>Restore returns these sessions to their pre-cleanup state. Current files are backed up first.</p>{operation.backupDirectory && <div><p className="text-neutral-500">Recovery backup location</p><p className="break-all font-mono text-[11px] text-neutral-400">{operation.backupDirectory}</p></div>}</div>}</div>}
-    {confirmingRestore && operation?.canRestore && <div role="alert" className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/[.06] p-4"><p className="text-sm font-semibold text-amber-100">Restore these sessions?</p><p className="mt-1.5 text-xs leading-5 text-amber-100/75">This replaces the affected Codex session data with the recovery backup. Session Steward saves the current files first.</p></div>}
+    {confirmingRestore && operation?.canRestore && <div role="alert" className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/[.06] p-4"><p className="text-sm font-semibold text-amber-100">Restore these sessions?</p><p className="mt-1.5 text-xs leading-5 text-amber-100/75">This replaces the affected {providerName} session data with the recovery backup. Session Steward saves the current files first.</p></div>}
     {confirmingBackupDelete && operation?.canDeleteBackup && <div role="alert" className="mt-4 rounded-xl border border-rose-300/20 bg-rose-300/[.06] p-4"><p className="text-sm font-semibold text-rose-100">Delete this recovery backup?</p><p className="mt-1.5 text-xs leading-5 text-rose-100/75">You will no longer be able to restore these sessions from this backup.</p></div>}
-    {!operation && <div className="mt-5 flex gap-3 rounded-xl border border-amber-300/15 bg-amber-300/[.045] p-3.5"><AlertTriangle size={17} className="mt-0.5 shrink-0 text-amber-300"/><p className="text-xs leading-5 text-amber-100/80"><strong className="font-semibold text-amber-100">Close selected Codex sessions first.</strong> Session Steward cannot tell whether one is currently active.</p></div>}
+    {!operation && <div className="mt-5 flex gap-3 rounded-xl border border-amber-300/15 bg-amber-300/[.045] p-3.5"><AlertTriangle size={17} className="mt-0.5 shrink-0 text-amber-300"/><p className="text-xs leading-5 text-amber-100/80"><strong className="font-semibold text-amber-100">Close selected {providerName} sessions first.</strong> Session Steward blocks sessions it can identify as running; closing them also prevents last-second changes.</p></div>}
     <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">{!operation && <button disabled={isDeleting} onClick={onClose} className="button ghost">Cancel</button>}{!operation && <button disabled={isDeleting || !plan} onClick={onDelete} className="button danger min-w-40"><Trash2 size={15}/>{isDeleting ? "Starting cleanup…" : "Delete selected sessions"}</button>}{active && operation.canCancel && <button disabled={operation.cancelRequested} onClick={onCancelCleanup} className="button ghost">{operation.cancelRequested ? "Cancellation requested" : "Cancel cleanup"}</button>}{operation && !active && !confirmingRestore && !confirmingBackupDelete && <button onClick={onClose} className="button secondary">{operation.canRestore ? "Keep backup" : "Close"}</button>}{operation?.canDeleteBackup && !confirmingRestore && !confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingBackupDelete(true)} className="button ghost">Delete backup</button>}{operation?.canRestore && !confirmingRestore && !confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingRestore(true)} className="button primary">Restore backup</button>}{confirmingRestore && <button disabled={isDeleting} onClick={() => setConfirmingRestore(false)} className="button ghost">Cancel</button>}{confirmingRestore && <button disabled={isDeleting} onClick={onRestore} className="button primary">{isDeleting ? "Restoring…" : "Restore sessions"}</button>}{confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingBackupDelete(false)} className="button ghost">Cancel</button>}{confirmingBackupDelete && <button disabled={isDeleting} onClick={onDeleteBackup} className="button danger">{isDeleting ? "Deleting…" : "Delete backup"}</button>}</div>
   </section></div>;
 }

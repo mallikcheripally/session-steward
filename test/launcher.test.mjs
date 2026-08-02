@@ -26,5 +26,5 @@ test("the browser launcher shows help without starting the server", async () => 
 test("the browser launcher reports the installed version", async () => {
   const output = await runLauncher(["--version"]);
 
-  assert.equal(output.trim(), "0.2.0");
+  assert.equal(output.trim(), "0.3.0");
 });
