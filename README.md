@@ -1,5 +1,9 @@
 # Session Steward
 
+[![npm version](https://img.shields.io/npm/v/session-steward?style=flat-square)](https://www.npmjs.com/package/session-steward)
+[![Build status](https://img.shields.io/github/actions/workflow/status/mallikcheripally/session-steward/validate.yml?branch=main&style=flat-square&label=build)](https://github.com/mallikcheripally/session-steward/actions/workflows/validate.yml)
+[![License: MIT](https://img.shields.io/npm/l/session-steward?style=flat-square)](https://github.com/mallikcheripally/session-steward/blob/main/LICENSE)
+
 A local Codex and Claude Code session manager for safely reviewing, backing up, and deleting old sessions from a browser UI or terminal CLI.
 
 AI coding tools can accumulate hundreds or thousands of local sessions. A session may leave behind transcripts, history, logs, checkpoints, and linked artifacts, so manual cleanup can easily miss related data.
@@ -18,6 +22,18 @@ Session Steward makes session cleanup safer by finding those records, showing wh
 - Inspect session details and affected records before deletion.
 - Choose standard or thorough cleanup.
 - Use custom Codex or Claude home folders across browser and terminal sessions.
+
+## Built for large session libraries
+
+Current synthetic benchmarks on an arm64 Mac with Node.js 24.15.0:
+
+| Scenario | Scale | Time | Measured memory growth |
+| --- | ---: | ---: | ---: |
+| Paginated session listing | 50,003 sessions | 26 ms | 0.16 MB heap |
+| Session size index | 20,003 sessions | 85 ms cold, 9.7 ms warm | 30 MB peak RSS |
+| Transcript-only discovery | 5,003 sessions | 662 ms | 4.02 MB heap |
+
+Results vary with hardware, disk speed, and session layout. The benchmark commands are included in the repository and use temporary synthetic data.
 
 ## Safe by default
 
@@ -115,6 +131,17 @@ List sessions as JSON:
 session-steward-cli --json --limit 10
 ```
 
+<details>
+<summary>More terminal options</summary>
+
+Show session and workspace storage totals:
+
+```bash
+session-steward-cli --overview
+```
+
+Add `--json` when the output will be read by another tool.
+
 Find sessions inactive for at least 60 days:
 
 ```bash
@@ -133,6 +160,8 @@ Show sessions from one exact workspace:
 session-steward-cli --workspace /path/to/project
 ```
 
+Use `--include-internals` to include subagents and `--include-supporting` to include supporting sessions. Session sizes are shown in the interactive list, and `--sort size` places the largest sessions first.
+
 The interactive terminal accepts the same filters:
 
 ```text
@@ -142,9 +171,19 @@ inactive 90
 archive active
 archive archived
 workspace /path/to/project
+internals
+supporting
+cleanup standard
+cleanup thorough
+overview
+backups
 ```
 
 Run `inactive`, `archive`, or `workspace` without a value to clear that filter.
+
+`backups` lists recovery backups retained after an interrupted or unsuccessful cleanup. Use `restore <number>` to restore one, or `delete-backup <number>` to remove it permanently. Both actions require an explicit confirmation.
+
+</details>
 
 Use `session-steward-cli --help` to see all available options.
 
@@ -210,6 +249,7 @@ Scale benchmarks are also available:
 ```bash
 npm run benchmark:scale
 npm run benchmark:overview
+npm run benchmark:size
 npm run benchmark:discovery
 npm run benchmark:transcripts
 ```
@@ -221,6 +261,8 @@ Tests and benchmarks use temporary synthetic session data. They do not read or m
 Codex, Claude Code CLI, and local Claude Code Desktop sessions are supported. Claude Desktop archive is not treated as deletion, and Session Steward never removes its worktrees.
 
 Use [GitHub Issues](https://github.com/mallikcheripally/session-steward/issues) to report a bug, request a provider, or share a storage format that Session Steward does not recognize.
+
+See the [changelog](https://github.com/mallikcheripally/session-steward/blob/main/CHANGELOG.md) for published release history.
 
 Session Steward is an independent project and is not affiliated with or endorsed by OpenAI or Anthropic.
 

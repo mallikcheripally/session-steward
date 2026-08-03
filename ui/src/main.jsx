@@ -19,15 +19,100 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   X,
 } from "lucide-react";
+import { sessionDateGroupForSort } from "./date-groups.mjs";
 import "./styles.css";
 
 const PAGE_SIZE = 25;
 const MAX_PAGE_LINKS = 5;
 const PLAN_REVIEW_REQUIRED = "DELETION_PLAN_REVIEW_REQUIRED";
 const ALL_WORKSPACES = "__all_workspaces__";
+
+const FILTER_REGISTRY = [
+  {
+    defaultValue: "",
+    icon: Search,
+    id: "search",
+    label: "Search sessions",
+    placeholder: "Name, workspace, or session ID",
+    placement: "primary",
+    priority: 3,
+    providers: ["codex", "claude-code"],
+    type: "search",
+  },
+  {
+    defaultValue: ALL_WORKSPACES,
+    icon: FolderKanban,
+    id: "workspace",
+    label: "Workspace",
+    options: "workspaces",
+    placement: "primary",
+    priority: 2,
+    providers: ["codex", "claude-code"],
+    type: "select",
+  },
+  {
+    defaultValue: "",
+    icon: Clock3,
+    id: "inactiveDays",
+    label: "Inactive for",
+    options: [
+      { label: "Any time", value: "" },
+      { label: "30 days or more", value: "30" },
+      { label: "60 days or more", value: "60" },
+      { label: "90 days or more", value: "90" },
+    ],
+    placement: "primary",
+    priority: 1,
+    providers: ["codex", "claude-code"],
+    showsUnknownActivityNote: true,
+    type: "select",
+  },
+  {
+    defaultValue: "all",
+    icon: Archive,
+    id: "archiveStatus",
+    label: "Status",
+    options: [
+      { label: "All sessions", value: "all" },
+      { label: "Active", value: "active" },
+      { label: "Archived", value: "archived" },
+    ],
+    placement: "overflow",
+    priority: 3,
+    providers: ["codex", "claude-code"],
+    type: "select",
+  },
+  {
+    defaultValue: false,
+    icon: Bot,
+    id: "internals",
+    label: "Subagent sessions",
+    placement: "overflow",
+    priority: 2,
+    providers: ["codex"],
+    type: "toggle",
+  },
+  {
+    defaultValue: false,
+    icon: GitBranch,
+    id: "supporting",
+    label: "Supporting sessions",
+    placement: "overflow",
+    priority: 1,
+    providers: ["codex"],
+    type: "toggle",
+  },
+];
+
+const DEFAULT_FILTER_VALUES = Object.fromEntries(FILTER_REGISTRY.map(({ defaultValue, id }) => [id, defaultValue]));
+const PROVIDER_ICONS = {
+  "claude-code": AnthropicIcon,
+  codex: OpenAIIcon,
+};
 
 const api = async (path, options = {}) => {
   const response = await fetch(path, {
@@ -62,10 +147,21 @@ const folderName = (value) => {
   return parts.at(-1) || value;
 };
 
-const workspaceOptionLabel = ({ path: workspacePath, sessionCount }) => {
-  if (!workspacePath) return `Workspace not recorded · ${sessionCount.toLocaleString()}`;
-  return `${folderName(workspacePath)} — ${workspacePath} · ${sessionCount.toLocaleString()}`;
+const workspaceOptionLabel = ({ path: workspacePath, sessionCount, transcriptBytes }) => {
+  const sessionLabel = `${sessionCount.toLocaleString()} ${sessionCount === 1 ? "session" : "sessions"}`;
+  const sizeLabel = fileSize(transcriptBytes);
+  if (!workspacePath) return `Workspace not recorded · ${sizeLabel} · ${sessionLabel}`;
+  const parts = workspacePath.replace(/[\\/]+$/u, "").split(/[\\/]/u).filter(Boolean);
+  const parent = parts.length > 1 ? ` — …/${parts.at(-2)}` : "";
+  return `${folderName(workspacePath)} · ${sizeLabel} · ${sessionLabel}${parent}`;
 };
+
+const selectionRecord = ({ cwd, displayName, transcriptBytes, updatedAtMs }) => ({
+  cwd,
+  displayName,
+  transcriptBytes,
+  updatedAtMs,
+});
 
 const fileSize = (bytes) => {
   if (!Number.isFinite(bytes) || bytes < 0) return "Unknown";
@@ -82,8 +178,8 @@ const fileSize = (bytes) => {
 };
 
 const versionStatus = (support) => ({
-  "exact-supported": "tested version",
-  newer: "newer than tested",
+  "exact-supported": "tested",
+  newer: "not yet tested",
   older: "older than tested",
   unavailable: "not found",
   unrecognized: "version not recognized",
@@ -106,20 +202,19 @@ function getSessionKind(record) {
 }
 
 function App() {
-  const [activeProviderId, setActiveProviderId] = useState("codex");
+  const [activeProviderId, setActiveProviderId] = useState(null);
+  const [configReady, setConfigReady] = useState(false);
   const [providers, setProviders] = useState({});
   const [records, setRecords] = useState([]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
   const [selected, setSelected] = useState(new Set());
+  const [selectedRecords, setSelectedRecords] = useState(new Map());
+  const [selectionTrayExpanded, setSelectionTrayExpanded] = useState(false);
+  const [cursorIndex, setCursorIndex] = useState(0);
   const [inspected, setInspected] = useState(null);
-  const [search, setSearch] = useState("");
+  const [filterValues, setFilterValues] = useState(DEFAULT_FILTER_VALUES);
   const [sort, setSort] = useState("updated");
-  const [internals, setInternals] = useState(false);
-  const [supporting, setSupporting] = useState(false);
-  const [inactiveDays, setInactiveDays] = useState("");
-  const [archiveStatus, setArchiveStatus] = useState("all");
-  const [workspace, setWorkspace] = useState(ALL_WORKSPACES);
   const [page, setPage] = useState(1);
   const [token, setToken] = useState("");
   const [providerSettings, setProviderSettings] = useState(null);
@@ -138,14 +233,43 @@ function App() {
   const [overview, setOverview] = useState(null);
   const [overviewError, setOverviewError] = useState("");
   const [showCompatibilityDetails, setShowCompatibilityDetails] = useState(false);
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const [showShortcutSheet, setShowShortcutSheet] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isOverviewLoading, setIsOverviewLoading] = useState(true);
   const [isPlanning, setIsPlanning] = useState(false);
+  const [isPlanRefreshing, setIsPlanRefreshing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const compatibilityRef = useRef(null);
   const loadSequence = useRef(0);
   const loadController = useRef(null);
+  const planSequence = useRef(0);
+  const overviewSequence = useRef(0);
+  const rowRefs = useRef([]);
+  const searchInputRef = useRef(null);
+  const selectPageRef = useRef(null);
+  const shouldScrollCursor = useRef(false);
+  const keyboardStateRef = useRef(null);
+
+  const {
+    archiveStatus,
+    inactiveDays,
+    internals,
+    search,
+    supporting,
+    workspace,
+  } = filterValues;
+
+  const setFilter = (id, value) => setFilterValues((current) => ({ ...current, [id]: value }));
+
+  const resetFilters = () => setFilterValues(DEFAULT_FILTER_VALUES);
+
+  const clearSelection = () => {
+    setSelected(new Set());
+    setSelectedRecords(new Map());
+    setSelectionTrayExpanded(false);
+  };
 
   const load = async ({ providerId = activeProviderId, queryOverrides = {} } = {}) => {
     const sequence = ++loadSequence.current;
@@ -196,16 +320,18 @@ function App() {
   };
 
   const loadOverview = async ({ providerId = activeProviderId, refresh = false } = {}) => {
+    const sequence = ++overviewSequence.current;
     try {
       setIsOverviewLoading(true);
       setOverviewError("");
       const suffix = new URLSearchParams({ provider: providerId });
       if (refresh) suffix.set("refresh", "true");
-      setOverview((await api(`/api/session-overview?${suffix}`)).overview);
+      const nextOverview = (await api(`/api/session-overview?${suffix}`)).overview;
+      if (sequence === overviewSequence.current) setOverview(nextOverview);
     } catch {
-      setOverviewError("Overview unavailable");
+      if (sequence === overviewSequence.current) setOverviewError("Overview unavailable");
     } finally {
-      setIsOverviewLoading(false);
+      if (sequence === overviewSequence.current) setIsOverviewLoading(false);
     }
   };
 
@@ -227,29 +353,71 @@ function App() {
   };
 
   useEffect(() => {
-    api("/api/config").then(({ mutationToken, providers: availableProviders }) => {
+    let cancelled = false;
+    api("/api/config").then(({ activeProviderId: savedProviderId, mutationToken, providers: availableProviders }) => {
+      if (cancelled) return;
+      const providerId = availableProviders[savedProviderId] ? savedProviderId : "codex";
+      const provider = availableProviders[providerId];
+      setActiveProviderId(providerId);
       setToken(mutationToken);
       setProviders(availableProviders);
-      setProviderSettings(availableProviders.codex);
-      setProviderHomeDraft(availableProviders.codex.home);
+      setProviderSettings(provider);
+      setProviderHomeDraft(provider.home);
+      setConfigReady(true);
     }).catch((issue) => setError(issue.message));
-    api("/api/compatibility?provider=codex").then(setCompatibility).catch((issue) => setError(issue.message));
-    loadOverview();
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useEffect(() => {
+    if (!configReady || !activeProviderId) return undefined;
+    let cancelled = false;
+    setCompatibility(null);
+    setOverview(null);
+    api(`/api/compatibility?provider=${encodeURIComponent(activeProviderId)}`)
+      .then((diagnostic) => {
+        if (!cancelled) setCompatibility(diagnostic);
+      })
+      .catch((issue) => {
+        if (!cancelled) setError(issue.message);
+      });
+    loadOverview({ providerId: activeProviderId });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProviderId, configReady]);
 
   useEffect(() => {
     setPage(1);
   }, [search, sort, internals, supporting, inactiveDays, archiveStatus, workspace]);
 
   useEffect(() => {
-    setSelected(new Set());
+    clearSelection();
     setInspected(null);
   }, [search, internals, supporting, inactiveDays, archiveStatus, workspace]);
 
   useEffect(() => {
+    setCursorIndex(0);
+  }, [activeProviderId, search, sort, internals, supporting, inactiveDays, archiveStatus, workspace, page]);
+
+  useEffect(() => {
+    setCursorIndex((current) => records.length > 0
+      ? Math.min(current, records.length - 1)
+      : 0);
+  }, [records]);
+
+  useEffect(() => {
+    if (!shouldScrollCursor.current) return;
+    rowRefs.current[cursorIndex]?.scrollIntoView({ block: "nearest" });
+    shouldScrollCursor.current = false;
+  }, [cursorIndex, records]);
+
+  useEffect(() => {
+    if (!configReady || !activeProviderId) return undefined;
     const timer = setTimeout(load, 120);
     return () => clearTimeout(timer);
-  }, [activeProviderId, search, sort, internals, supporting, inactiveDays, archiveStatus, workspace, page]);
+  }, [activeProviderId, archiveStatus, configReady, inactiveDays, internals, page, search, sort, supporting, workspace]);
 
   useEffect(() => {
     if (!showCompatibilityDetails) return undefined;
@@ -276,22 +444,23 @@ function App() {
 
   const pageNumbers = useMemo(() => getPageNumbers(page, pages), [page, pages]);
   const allPageSelected = records.length > 0 && records.every((record) => selected.has(record.id));
-  const filterCount = Number(Boolean(search.trim()))
-    + Number(internals)
-    + Number(supporting)
-    + Number(Boolean(inactiveDays))
-    + Number(archiveStatus !== "all")
-    + Number(workspace !== ALL_WORKSPACES);
+  const somePageSelected = records.some((record) => selected.has(record.id));
+  const availableFilters = FILTER_REGISTRY.filter(({ providers: supportedProviders }) => supportedProviders.includes(activeProviderId));
+  const activeFilters = availableFilters.filter(({ defaultValue, id }) => filterValues[id] !== defaultValue);
+  const filterCount = activeFilters.length;
   const hasActiveFilters = filterCount > 0;
 
-  const clearFilters = () => {
-    setSearch("");
-    setInternals(false);
-    setSupporting(false);
-    setInactiveDays("");
-    setArchiveStatus("all");
-    setWorkspace(ALL_WORKSPACES);
-  };
+  useEffect(() => {
+    if (selectPageRef.current) {
+      selectPageRef.current.indeterminate = somePageSelected && !allPageSelected;
+    }
+  }, [allPageSelected, somePageSelected]);
+
+  useEffect(() => {
+    if (selected.size === 0) setSelectionTrayExpanded(false);
+  }, [selected]);
+
+  const clearFilters = resetFilters;
 
   const inspect = async (id) => {
     try {
@@ -302,15 +471,22 @@ function App() {
     }
   };
 
-  const makePlan = async (nextScope = scope, { noticeText = "" } = {}) => {
+  const makePlan = async (nextScope = scope, { noticeText = "", preservePlan = false } = {}) => {
+    const requestSequence = ++planSequence.current;
+    const previousScope = scope;
     try {
-      setPlan(null);
+      if (!preservePlan) setPlan(null);
+      if (preservePlan) {
+        setScope(nextScope);
+        setIsPlanRefreshing(true);
+      }
       setPlanError("");
       setPlanNotice("");
       const result = await api("/api/deletion-plans", {
         method: "POST",
         body: JSON.stringify({ ids: [...selected], providerId: activeProviderId, scope: nextScope }),
       });
+      if (requestSequence !== planSequence.current) return false;
       setPlan(result.plan);
       setOperation(null);
       setScope(nextScope);
@@ -318,10 +494,19 @@ function App() {
       setPlanNotice(noticeText);
       return true;
     } catch (issue) {
+      if (requestSequence !== planSequence.current) return false;
+      if (preservePlan) setScope(previousScope);
       setPlanError(issue.message);
       setError(issue.message);
       return false;
+    } finally {
+      if (requestSequence === planSequence.current) setIsPlanRefreshing(false);
     }
+  };
+
+  const changeCleanupScope = (nextScope) => {
+    if (nextScope === scope || isPlanRefreshing) return;
+    makePlan(nextScope, { preservePlan: true });
   };
 
   const refreshDeletionPlan = async (code) => {
@@ -344,6 +529,7 @@ function App() {
   };
 
   const remove = async () => {
+    const plannedTranscriptBytes = plan?.transcriptBytes;
     try {
       setIsDeleting(true);
       setError("");
@@ -362,11 +548,20 @@ function App() {
       }
 
       if (current.status === "completed") {
+        const result = current.result || {};
+        const backupSummary = result.recoveryBackupDeleted === true
+          ? "backup verified and removed"
+          : `backup kept${current.backupDirectory ? ` at ${current.backupDirectory}` : ""}`;
+        const sessionCount = Number(result.deletedSessionCount) || 0;
+        const transcriptCount = Number(result.deletedTranscriptCount) || 0;
         setDialog(false);
-        setSelected(new Set());
+        clearSelection();
         setInspected(null);
         setPlan(null);
-        setNotice({ kind: "success", text: "Cleanup completed and verified." });
+        setNotice({
+          kind: "success",
+          text: `Deleted ${sessionCount.toLocaleString()} ${sessionCount === 1 ? "session" : "sessions"} and ${transcriptCount.toLocaleString()} ${transcriptCount === 1 ? "file" : "files"} · ${fileSize(plannedTranscriptBytes)} freed · ${backupSummary}.`,
+        });
       } else if (current.status === "cancelled") {
         setDialog(false);
         setPlan(null);
@@ -417,7 +612,7 @@ function App() {
 
       if (current.status === "restored") {
         setDialog(false);
-        setSelected(new Set());
+        clearSelection();
         setInspected(null);
         setPlan(null);
         setNotice({ kind: "success", text: "The recovery backup was restored." });
@@ -456,18 +651,13 @@ function App() {
     setProviderSettings(provider);
     setProviderHomeDraft(provider.home);
     setEditingProviderHome(false);
-    setSelected(new Set());
+    clearSelection();
     setInspected(null);
     setPlan(null);
     setOperation(null);
     setDialog(false);
     setPage(1);
-    setSearch("");
-    setInternals(false);
-    setSupporting(false);
-    setInactiveDays("");
-    setArchiveStatus("all");
-    setWorkspace(ALL_WORKSPACES);
+    resetFilters();
     const [diagnostic] = await Promise.all([
       api(`/api/compatibility?provider=${encodeURIComponent(activeProviderId)}`),
       load({
@@ -521,68 +711,226 @@ function App() {
     }
   };
 
-  const toggle = (id) => setSelected((current) => {
-    const next = new Set(current);
-    next.has(id) ? next.delete(id) : next.add(id);
-    return next;
-  });
+  const selectRecords = (nextRecords) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      nextRecords.forEach(({ id }) => next.add(id));
+      return next;
+    });
+    setSelectedRecords((current) => {
+      const next = new Map(current);
+      nextRecords.forEach((record) => next.set(record.id, selectionRecord(record)));
+      return next;
+    });
+  };
 
-  const togglePage = () => setSelected((current) => {
-    const next = new Set(current);
-    if (allPageSelected) records.forEach((record) => next.delete(record.id));
-    else records.forEach((record) => next.add(record.id));
-    return next;
-  });
+  const toggle = (record) => {
+    const nextSelected = !selected.has(record.id);
+    setSelected((current) => {
+      const next = new Set(current);
+      nextSelected ? next.add(record.id) : next.delete(record.id);
+      return next;
+    });
+    setSelectedRecords((current) => {
+      const next = new Map(current);
+      nextSelected
+        ? next.set(record.id, selectionRecord(record))
+        : next.delete(record.id);
+      return next;
+    });
+  };
 
-  const switchProvider = async (providerId) => {
+  const togglePage = () => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (allPageSelected) records.forEach((record) => next.delete(record.id));
+      else records.forEach((record) => next.add(record.id));
+      return next;
+    });
+    setSelectedRecords((current) => {
+      const next = new Map(current);
+      if (allPageSelected) records.forEach((record) => next.delete(record.id));
+      else records.forEach((record) => next.set(record.id, selectionRecord(record)));
+      return next;
+    });
+  };
+
+  const moveCursor = (offset, { selectMoved = false } = {}) => {
+    if (records.length === 0) return;
+    const nextIndex = Math.min(records.length - 1, Math.max(0, cursorIndex + offset));
+    if (nextIndex === cursorIndex) return;
+    shouldScrollCursor.current = true;
+    setCursorIndex(nextIndex);
+    if (selectMoved) selectRecords([records[cursorIndex], records[nextIndex]]);
+  };
+
+  const removeSelectedRecord = (id) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+    setSelectedRecords((current) => {
+      const next = new Map(current);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const switchProvider = (providerId) => {
     if (providerId === activeProviderId || isDeleting || isPlanning) return;
     const provider = providers[providerId];
     setActiveProviderId(providerId);
     setProviderSettings(provider);
     setProviderHomeDraft(provider.home);
     setEditingProviderHome(false);
-    setSelected(new Set());
+    clearSelection();
     setInspected(null);
     setPlan(null);
     setOperation(null);
     setDialog(false);
     setPage(1);
-    setSearch("");
-    setInternals(false);
-    setSupporting(false);
-    setInactiveDays("");
-    setArchiveStatus("all");
-    setWorkspace(ALL_WORKSPACES);
+    resetFilters();
     setOverview(null);
     setCompatibility(null);
-    try {
-      const [diagnostic] = await Promise.all([
-        api(`/api/compatibility?provider=${encodeURIComponent(providerId)}`),
-        load({ providerId, queryOverrides: { archiveStatus: "all", inactiveDays: "", internals: false, page: 1, search: "", supporting: false, workspace: ALL_WORKSPACES } }),
-        loadOverview({ providerId, refresh: true }),
-      ]);
-      setCompatibility(diagnostic);
-    } catch (issue) {
-      setError(issue.message);
-    }
+    api("/api/settings/active-provider", {
+      body: JSON.stringify({ providerId }),
+      headers: { "X-Session-Steward-Token": token },
+      method: "PUT",
+    }).catch(() => {});
   };
+
+  keyboardStateRef.current = {
+    clearSelection,
+    cursorIndex,
+    dialog,
+    inspect,
+    inspected,
+    isDeleting,
+    isPlanning,
+    isSavingProviderHome,
+    moveCursor,
+    openDeleteDialog,
+    page,
+    pages,
+    records,
+    selected,
+    showCompatibilityDetails,
+    showShortcutSheet,
+    toggle,
+    togglePage,
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      const state = keyboardStateRef.current;
+      if (state.dialog) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (state.isDeleting || state.isPlanning || state.isSavingProviderHome) return;
+
+      const target = event.target;
+      const editable = target?.matches?.("input, select, textarea") || target?.isContentEditable;
+
+      if (editable) {
+        if (event.key === "Escape") target.blur();
+        return;
+      }
+
+      if (state.showShortcutSheet) {
+        if (event.key === "Escape" || event.key === "?") {
+          event.preventDefault();
+          setShowShortcutSheet(false);
+        }
+        return;
+      }
+
+      if (event.key === "?") {
+        event.preventDefault();
+        setShowCompatibilityDetails(false);
+        setShowShortcutSheet(true);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        if (state.showCompatibilityDetails) setShowCompatibilityDetails(false);
+        else if (state.inspected) setInspected(null);
+        else if (state.selected.size > 0) state.clearSelection();
+        return;
+      }
+
+      if (event.key === "/") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+
+      if (event.shiftKey && (key === "j" || key === "k")) {
+        event.preventDefault();
+        state.moveCursor(key === "j" ? 1 : -1, { selectMoved: true });
+        return;
+      }
+
+      if (key === "j" || event.key === "ArrowDown") {
+        event.preventDefault();
+        state.moveCursor(1);
+        return;
+      }
+
+      if (key === "k" || event.key === "ArrowUp") {
+        event.preventDefault();
+        state.moveCursor(-1);
+        return;
+      }
+
+      const cursorRecord = state.records[state.cursorIndex];
+
+      if (key === "x" && cursorRecord) {
+        event.preventDefault();
+        state.toggle(cursorRecord);
+      } else if (key === "a" && state.records.length > 0) {
+        event.preventDefault();
+        state.togglePage();
+      } else if ((event.key === "Enter" || key === "o") && cursorRecord) {
+        if (event.key === "Enter" && target?.closest?.("button, a")) return;
+        event.preventDefault();
+        state.inspect(cursorRecord.id);
+      } else if (event.key === "[" && state.page > 1) {
+        event.preventDefault();
+        setPage(state.page - 1);
+      } else if (event.key === "]" && state.page < state.pages) {
+        event.preventDefault();
+        setPage(state.page + 1);
+      } else if (event.key === "Backspace" || event.key === "Delete") {
+        event.preventDefault();
+        if (state.selected.size > 0) state.openDeleteDialog();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const activeProviderName = providerSettings?.displayName || "Codex";
 
-  return <main className="app-shell min-h-screen text-neutral-100">
-    <div className="relative mx-auto max-w-[1380px] px-4 py-5 sm:px-6 sm:py-8 lg:px-8">
+  return <main className="app-shell min-h-screen text-primary">
+    <div className={`relative mx-auto max-w-[1380px] px-4 py-5 sm:px-6 sm:py-8 lg:px-8 ${selected.size > 0 ? "has-selection-tray" : ""} ${selectionTrayExpanded ? "has-selection-tray-expanded" : ""}`}>
       <header className="mb-5 flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
         <div className="flex items-center gap-3.5">
           <div className="brand-mark"><ShieldCheck size={23}/></div>
           <div>
-            <p className="mb-1 text-xs font-medium text-neutral-500">Local AI coding session manager</p>
-            <h1 className="text-2xl font-semibold tracking-[-.035em] text-white sm:text-[1.75rem]">Session Steward</h1>
+            <p className="brand-kicker">Local AI coding session manager</p>
+            <h1 className="brand-title">Session Steward</h1>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="provider-switch" aria-label="Session provider">{Object.entries(providers).map(([id, provider]) => <button key={id} type="button" disabled={isDeleting || isPlanning} aria-pressed={activeProviderId === id} onClick={() => switchProvider(id)}>{provider.displayName}</button>)}</div>
+          <div className="provider-switch" aria-label="Session provider">{Object.entries(providers).map(([id, provider]) => {
+            const ProviderIcon = PROVIDER_ICONS[id];
+            return <button key={id} type="button" disabled={isDeleting || isPlanning} aria-pressed={activeProviderId === id} onClick={() => switchProvider(id)}><ProviderIcon size={14}/><span>{provider.displayName}</span></button>;
+          })}</div>
+          <button disabled={isRefreshing} onClick={refreshAll} className="icon-button refresh-button" aria-label={isRefreshing ? "Refreshing sessions" : "Refresh sessions"} title="Refresh sessions"><RefreshCw size={16} className={isRefreshing ? "animate-spin" : undefined}/></button>
           <CompatibilityControl compatibilityRef={compatibilityRef} compatibility={compatibility} expanded={showCompatibilityDetails} onToggle={() => setShowCompatibilityDetails((current) => !current)} onClose={() => setShowCompatibilityDetails(false)}/>
-          <button disabled={isRefreshing} onClick={refreshAll} className="button secondary"><RefreshCw size={15} className={isRefreshing ? "animate-spin" : undefined}/><span>{isRefreshing ? "Refreshing" : "Refresh"}</span></button>
         </div>
       </header>
 
@@ -603,56 +951,46 @@ function App() {
         {error && <Alert kind="error" onDismiss={() => setError("")}>{error}</Alert>}
       </div>
 
-      <Overview
+      {configReady && <Overview
         error={overviewError}
         loading={isOverviewLoading}
         overview={overview}
         providerId={activeProviderId}
-      />
+      />}
 
       <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="surface overflow-hidden">
-          <div className="session-list-header flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-white/[.07] px-4 py-3 sm:px-5">
+          <div className="session-list-header">
             <div>
               <div className="flex items-baseline gap-2">
-                <h2 className="text-base font-semibold text-white">Sessions</h2>
-                <span aria-live="polite" className="text-sm tabular-nums text-neutral-500">{total.toLocaleString()} shown</span>
+                <h2 className="section-title">Sessions</h2>
+                <span aria-live="polite" className="shown-count">{total.toLocaleString()} shown</span>
               </div>
             </div>
-            <div className="session-list-actions flex items-center gap-2"><button disabled={!selected.size || isLoading || isPlanning} onClick={openDeleteDialog} className="button danger">{isPlanning ? <RefreshCw size={15} className="animate-spin"/> : <Trash2 size={15}/>} {isPlanning ? "Preparing" : "Delete"}</button></div>
+            <div className="session-list-tools"><SortControl onChange={setSort} value={sort}/><p className="shortcut-hint">Press <kbd>?</kbd> for shortcuts</p></div>
           </div>
 
           <Filters
-            archiveStatus={archiveStatus}
+            activeFilters={activeFilters}
             clearFilters={clearFilters}
-            filterCount={filterCount}
-            inactiveDays={inactiveDays}
-            internals={internals}
+            filters={availableFilters}
             overview={overview}
-            providerId={activeProviderId}
-            search={search}
-            setArchiveStatus={setArchiveStatus}
-            setInactiveDays={setInactiveDays}
-            setInternals={setInternals}
-            setSearch={setSearch}
-            setSort={setSort}
-            setSupporting={setSupporting}
-            setWorkspace={setWorkspace}
-            sort={sort}
-            supporting={supporting}
-            workspace={workspace}
+            searchInputRef={searchInputRef}
+            setFilter={setFilter}
+            setShowMoreFilters={setShowMoreFilters}
+            showMoreFilters={showMoreFilters}
+            values={filterValues}
           />
 
-          <div className="flex min-h-12 items-center justify-between gap-3 border-b border-white/[.06] bg-white/[.012] px-4 py-2.5 sm:px-5">
-            <label className="selection-control"><input checked={allPageSelected} onChange={togglePage} disabled={!records.length || isLoading} type="checkbox"/><span>Select this page</span></label>
-            <span aria-hidden={selected.size === 0} aria-live="polite" className={`selection-count ${selected.size === 0 ? "selection-count-hidden" : ""}`}>{selected.size} selected</span>
+          <div className="page-selection-row">
+            <label className="selection-control"><input ref={selectPageRef} aria-checked={somePageSelected && !allPageSelected ? "mixed" : allPageSelected} checked={allPageSelected} onChange={togglePage} disabled={!records.length || isLoading} type="checkbox"/><span>Select this page</span></label>
           </div>
 
           <div className="min-h-[360px]">
             {isLoading
               ? <SessionSkeleton/>
               : records.length > 0
-                ? <div className="divide-y divide-white/[.055]">{records.map((record) => <SessionRow key={record.id} inspected={inspected?.id === record.id} onInspect={inspect} onToggle={toggle} record={record} selected={selected.has(record.id)}/>)}</div>
+                ? <SessionRows cursorIndex={cursorIndex} inspectedId={inspected?.id} onInspect={inspect} onToggle={toggle} records={records} rowRefs={rowRefs} selected={selected} sort={sort}/>
                 : <EmptyState hasActiveFilters={hasActiveFilters} onClear={clearFilters}/>
             }
           </div>
@@ -664,14 +1002,29 @@ function App() {
       </section>
     </div>
 
+    {selected.size > 0 && <SelectionTray
+      expanded={selectionTrayExpanded}
+      isLoading={isLoading}
+      isPlanning={isPlanning}
+      onClear={clearSelection}
+      onDelete={openDeleteDialog}
+      onRemove={removeSelectedRecord}
+      onToggle={() => setSelectionTrayExpanded((current) => !current)}
+      records={selectedRecords}
+      selectedCount={selected.size}
+    />}
+
+    {showShortcutSheet && <ShortcutSheet onClose={() => setShowShortcutSheet(false)}/>}
+
     {dialog && <DeletionDialog
       isDeleting={isDeleting}
+      isPlanRefreshing={isPlanRefreshing}
       onCancelCleanup={cancelCleanup}
       onClose={() => setDialog(false)}
       onDelete={remove}
       onDeleteBackup={deleteRecoveryBackup}
       onRestore={restoreBackup}
-      onScopeChange={makePlan}
+      onScopeChange={changeCleanupScope}
       operation={operation}
       plan={plan}
       planError={planError}
@@ -695,7 +1048,7 @@ function Alert({ children, kind, onDismiss }) {
 }
 
 function ProviderHomeControl({ editing, isSaving, onCancel, onChange, onEdit, onReset, onSubmit, provider, value }) {
-  if (!provider) return <div className="mb-3 h-12 animate-pulse rounded-lg bg-white/[.025]"/>;
+  if (!provider) return <div className="provider-context-placeholder skeleton"/>;
   const sourceLabel = provider.source === "startup" ? "This run" : provider.isDefault ? "Default" : "Saved";
 
   return <section className={`provider-context ${editing ? "provider-context-editing" : ""}`}>
@@ -711,19 +1064,25 @@ function ProviderHomeControl({ editing, isSaving, onCancel, onChange, onEdit, on
 
 function Overview({ error, loading, overview, providerId }) {
   const metrics = providerId === "claude-code" ? [
-    { icon: Database, label: "Total sessions", value: overview?.sessionCount.toLocaleString() },
+    { icon: HardDrive, label: "On disk", primary: true, value: overview ? fileSize(overview.transcriptBytes) : undefined },
+    { icon: Database, label: "All sessions", value: overview?.sessionCount.toLocaleString() },
     { icon: FileText, label: "CLI sessions", value: overview?.cliSessionCount?.toLocaleString() },
     { icon: Bot, label: "Desktop sessions", value: overview?.desktopSessionCount?.toLocaleString() },
-    { icon: HardDrive, label: "Session files size", value: overview ? fileSize(overview.transcriptBytes) : undefined },
   ] : [
     {
+      icon: HardDrive,
+      label: "On disk",
+      primary: true,
+      value: overview ? fileSize(overview.transcriptBytes) : undefined,
+    },
+    {
       icon: Database,
-      label: "Total sessions",
+      label: "All sessions",
       value: overview?.sessionCount.toLocaleString(),
     },
     {
       icon: FileText,
-      label: "Sessions",
+      label: "Primary sessions",
       value: overview?.primarySessionCount.toLocaleString(),
     },
     {
@@ -736,15 +1095,10 @@ function Overview({ error, loading, overview, providerId }) {
       label: "Supporting sessions",
       value: overview?.supportingCount.toLocaleString(),
     },
-    {
-      icon: HardDrive,
-      label: "Session files size",
-      value: overview ? fileSize(overview.transcriptBytes) : undefined,
-    },
   ];
 
   return <section aria-label="Session overview" className="overview-strip">
-    {metrics.map(({ icon: Icon, label, value }) => <div key={label} className="overview-item">
+    {metrics.map(({ icon: Icon, label, primary, value }) => <div key={label} className={`overview-item ${primary ? "overview-item-primary" : ""}`}>
       <Icon size={14}/>
       <div className="min-w-0">
         <p className="overview-label">{label}</p>
@@ -756,91 +1110,232 @@ function Overview({ error, loading, overview, providerId }) {
   </section>;
 }
 
-function Filters({
-  archiveStatus,
-  clearFilters,
-  filterCount,
-  inactiveDays,
-  internals,
-  overview,
-  providerId,
-  search,
-  setArchiveStatus,
-  setInactiveDays,
-  setInternals,
-  setSearch,
-  setSort,
-  setSupporting,
-  setWorkspace,
-  sort,
-  supporting,
-  workspace,
-}) {
+function filterOptions(filter, overview) {
+  if (filter.options === "workspaces") {
+    return [
+      { label: "All workspaces", value: ALL_WORKSPACES },
+      ...(overview?.workspaces || []).map((item) => ({
+        label: workspaceOptionLabel(item),
+        title: item.path || "Workspace not recorded",
+        value: item.path,
+      })),
+    ];
+  }
+  return filter.options || [];
+}
+
+function filterValueLabel(filter, overview, value) {
+  if (filter.type === "search") return value;
+  if (filter.type === "toggle") return filter.label;
+  return filterOptions(filter, overview).find((option) => option.value === value)?.label || value;
+}
+
+function filterChipLabel(filter, overview, value) {
+  return filter.type === "toggle"
+    ? filter.label
+    : `${filter.label}: ${filterValueLabel(filter, overview, value)}`;
+}
+
+function Filters({ activeFilters, clearFilters, filters, overview, searchInputRef, setFilter, setShowMoreFilters, showMoreFilters, values }) {
+  const primaryFilters = filters.filter(({ placement }) => placement === "primary").sort((a, b) => b.priority - a.priority);
+  const overflowFilters = filters.filter(({ placement }) => placement === "overflow").sort((a, b) => b.priority - a.priority);
+  const activeOverflowCount = overflowFilters.filter(({ defaultValue, id }) => values[id] !== defaultValue).length;
+  const searchFilter = primaryFilters.find(({ type }) => type === "search");
+  const demotableFilters = primaryFilters.filter(({ type }) => type !== "search");
+
   return <section className="session-filters" aria-label="Session filters">
-    <div className="session-filters-main">
-      <div className="filter-grid">
-        <label className="field"><span><Search size={13}/> Search sessions</span><div className="input-wrap"><Search size={16}/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name, workspace, or session ID"/>{search && <button type="button" onClick={() => setSearch("")} aria-label="Clear search"><X size={14}/></button>}</div></label>
-        <label className="field"><span><FolderKanban size={13}/> Workspace</span><select value={workspace} onChange={(event) => setWorkspace(event.target.value)}><option value={ALL_WORKSPACES}>All workspaces</option>{overview?.workspaces.map((item) => <option key={item.path || "__missing__"} value={item.path}>{workspaceOptionLabel(item)}</option>)}</select></label>
-        <label className="field"><span><Clock3 size={13}/> Inactive for</span><select value={inactiveDays} onChange={(event) => setInactiveDays(event.target.value)}><option value="">Any time</option><option value="30">30 days or more</option><option value="60">60 days or more</option><option value="90">90 days or more</option></select></label>
-        <label className="field"><span><Archive size={13}/> Status</span><select value={archiveStatus} onChange={(event) => setArchiveStatus(event.target.value)}><option value="all">All sessions</option><option value="active">Active</option><option value="archived">Archived</option></select></label>
-        <label className="field"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="updated">Last activity</option><option value="created">Created</option><option value="name">Name</option><option value="cwd">Workspace</option></select></label>
+    <div className="filter-bar">
+      {searchFilter && <FilterControl filter={searchFilter} inputRef={searchInputRef} onChange={setFilter} options={filterOptions(searchFilter, overview)} value={values[searchFilter.id]}/>}
+      <div className="filter-primary-controls">{demotableFilters.map((filter) => <FilterControl key={filter.id} className={`filter-priority-${filter.priority}`} filter={filter} onChange={setFilter} options={filterOptions(filter, overview)} value={values[filter.id]}/>)}</div>
+      <div className="more-filters-wrap">
+        <button type="button" aria-expanded={showMoreFilters} onClick={() => setShowMoreFilters((current) => !current)} className={`more-filters-button ${activeOverflowCount > 0 ? "more-filters-active" : ""}`}><SlidersHorizontal size={15}/><span>More filters</span>{activeOverflowCount > 0 && <strong>{activeOverflowCount}</strong>}</button>
       </div>
     </div>
-    <div className="filter-footer">
-      <div className="flex flex-wrap gap-2">{providerId === "codex" && <><Toggle checked={internals} onChange={setInternals}>Subagent sessions</Toggle><Toggle checked={supporting} onChange={setSupporting}>Supporting sessions</Toggle></>}</div>
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        {inactiveDays && overview?.unknownActivityCount > 0 && <p className="max-w-xs text-right text-[11px] leading-4 text-neutral-500">{overview.unknownActivityCount.toLocaleString()} with unknown activity are not included.</p>}
-        {filterCount > 0 && <button type="button" onClick={clearFilters} className="clear-filters"><X size={13}/> Clear filters <span>{filterCount}</span></button>}
-      </div>
+    {showMoreFilters && <div className="more-filters-row">
+      <div className="filter-overflow-primary">{demotableFilters.map((filter) => <FilterControl key={filter.id} className={`filter-priority-${filter.priority}`} filter={filter} onChange={setFilter} options={filterOptions(filter, overview)} value={values[filter.id]}/>)}</div>
+      <div className="filter-overflow-controls">{overflowFilters.map((filter) => <FilterControl key={filter.id} filter={filter} onChange={setFilter} options={filterOptions(filter, overview)} value={values[filter.id]}/>)}</div>
+    </div>}
+    <ActiveFilterRow activeFilters={activeFilters} clearFilters={clearFilters} overview={overview} setFilter={setFilter} values={values}/>
+    {activeFilters.some(({ showsUnknownActivityNote }) => showsUnknownActivityNote) && overview?.unknownActivityCount > 0 && <p className="unknown-activity-note">{overview.unknownActivityCount.toLocaleString()} sessions with unknown activity are not included.</p>}
+  </section>;
+}
+
+function FilterControl({ className = "", filter, inputRef, onChange, options, value }) {
+  const Icon = filter.icon;
+  if (filter.type === "toggle") {
+    return <Toggle checked={value} className={className} onChange={(checked) => onChange(filter.id, checked)}><Icon size={13}/><span>{filter.label}</span></Toggle>;
+  }
+  if (filter.type === "search") {
+    return <label className={`field filter-search ${className}`}><span><Icon size={13}/>{filter.label}</span><div className="input-wrap"><Search size={16}/><input ref={inputRef} value={value} onChange={(event) => onChange(filter.id, event.target.value)} placeholder={filter.placeholder}/>{value && <button type="button" onClick={() => onChange(filter.id, filter.defaultValue)} aria-label="Clear search"><X size={14}/></button>}</div></label>;
+  }
+  return <label className={`field filter-select ${className}`}><span><Icon size={13}/>{filter.label}</span><select value={value} onChange={(event) => onChange(filter.id, event.target.value)}>{options.map((option) => <option key={option.value || "__default__"} title={option.title} value={option.value}>{option.label}</option>)}</select></label>;
+}
+
+function SortControl({ onChange, value }) {
+  return <label className="sort-control"><span>Sort</span><select aria-label="Sort sessions" value={value} onChange={(event) => onChange(event.target.value)}><option value="updated">Last activity</option><option value="created">Created</option><option value="name">Name</option><option value="cwd">Workspace</option><option value="size">Largest first</option></select></label>;
+}
+
+function Toggle({ checked, children, className = "", onChange }) {
+  return <label className={`toggle ${className} ${checked ? "toggle-active" : ""}`}><input checked={checked} onChange={(event) => onChange(event.target.checked)} type="checkbox"/><span className="toggle-track"><span/></span><span className="toggle-copy">{children}</span></label>;
+}
+
+function SessionRow({ cursor, inspected, onInspect, onToggle, record, rowRef, selected }) {
+  const kind = getSessionKind(record);
+  const KindIcon = kind?.icon;
+
+  return <div ref={rowRef} className={`session-row group ${cursor ? "session-row-cursor" : ""} ${inspected ? "session-row-inspected" : ""} ${selected ? "session-row-selected" : ""}`}>
+    <label className="session-checkbox" aria-label={`Select ${record.displayName}`}><input checked={selected} onChange={() => onToggle(record)} type="checkbox"/></label>
+    <button type="button" onClick={() => onInspect(record.id)} className="min-w-0 text-left">
+      <span className="session-title" title={record.displayName}>{record.displayName}</span>
+      <span className="session-workspace"><FolderKanban size={12} className="shrink-0"/><span className="truncate" title={record.cwd || undefined}>{folderName(record.cwd)}</span>{record.archived && <span className="archive-tag"><Archive size={10}/>Archived</span>}</span>
+    </button>
+    <div className="session-row-meta">
+      {Number.isFinite(record.transcriptBytes) && <span aria-label={`Transcript ${fileSize(record.transcriptBytes)}`} className="size-badge" title="Transcript"><HardDrive size={11}/>{fileSize(record.transcriptBytes)}</span>}
+      <span className="time-badge" title={fullDate(record.updatedAtMs)}><Clock3 size={11}/>{age(record.updatedAtMs)}</span>
+      {kind && <span className="kind-label"><KindIcon size={11}/>{kind.label}</span>}
+    </div>
+    <ChevronRight size={16} className="session-row-chevron"/>
+  </div>;
+}
+
+function SessionRows({ cursorIndex, inspectedId, onInspect, onToggle, records, rowRefs, selected, sort }) {
+  const renderTime = Date.now();
+  let previousGroup = null;
+
+  return <div className="session-rows">{records.map((record, index) => {
+    const group = sessionDateGroupForSort(record, sort, renderTime);
+    const showGroup = Boolean(group) && group !== previousGroup;
+    previousGroup = group;
+
+    return <div className={`session-row-block ${showGroup ? "session-row-block-grouped" : ""}`} key={record.id}>
+      {showGroup && <div aria-label={group} className="date-separator" role="separator"><span>{group}</span><span aria-hidden="true" className="date-separator-line"/></div>}
+      <SessionRow cursor={cursorIndex === index} inspected={inspectedId === record.id} onInspect={onInspect} onToggle={onToggle} record={record} rowRef={(node) => { rowRefs.current[index] = node; }} selected={selected.has(record.id)}/>
+    </div>;
+  })}</div>;
+}
+
+function ActiveFilterRow({ activeFilters, clearFilters, overview, setFilter, values }) {
+  const [displayedFilters, setDisplayedFilters] = useState(() => activeFilters.map((filter) => ({
+    exiting: false,
+    filter,
+    value: values[filter.id],
+  })));
+
+  useEffect(() => {
+    const activeIds = new Set(activeFilters.map(({ id }) => id));
+    setDisplayedFilters((current) => [
+      ...activeFilters.map((filter) => ({
+        exiting: false,
+        filter,
+        value: values[filter.id],
+      })),
+      ...current
+        .filter(({ filter }) => !activeIds.has(filter.id))
+        .map((item) => ({ ...item, exiting: true })),
+    ]);
+  }, [activeFilters, values]);
+
+  useEffect(() => {
+    if (!displayedFilters.some(({ exiting }) => exiting)) return undefined;
+    const timer = setTimeout(() => {
+      setDisplayedFilters((current) => current.filter(({ exiting }) => !exiting));
+    }, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : 140);
+    return () => clearTimeout(timer);
+  }, [displayedFilters]);
+
+  if (displayedFilters.length === 0) return null;
+
+  return <div className={`active-filter-row ${activeFilters.length === 0 ? "active-filter-row-clearing" : ""}`}>
+    <div className="active-filter-chips">{displayedFilters.map(({ exiting, filter, value }) => <button aria-hidden={exiting || undefined} className={`filter-chip ${exiting ? "filter-chip-exiting" : ""}`} disabled={exiting} key={filter.id} onClick={() => setFilter(filter.id, filter.defaultValue)} tabIndex={exiting ? -1 : undefined} type="button"><span>{filterChipLabel(filter, overview, value)}</span><X size={12}/></button>)}</div>
+    {activeFilters.length > 1 && <button className="clear-all-filters" onClick={clearFilters} type="button">Clear all</button>}
+  </div>;
+}
+
+function SelectionTray({ expanded, isLoading, isPlanning, onClear, onDelete, onRemove, onToggle, records, selectedCount }) {
+  const entries = [...records.entries()];
+  const transcriptBytes = entries.reduce((sum, [, record]) => Number.isFinite(record.transcriptBytes)
+    ? sum + record.transcriptBytes
+    : sum, 0);
+  const withoutTranscript = entries.filter(([, record]) => record.transcriptBytes === null).length;
+  const summary = `${selectedCount.toLocaleString()} ${selectedCount === 1 ? "session" : "sessions"} selected · ${fileSize(transcriptBytes)}${withoutTranscript > 0 ? ` · ${withoutTranscript.toLocaleString()} without a transcript` : ""}`;
+
+  return <section aria-label="Selected sessions" className={`selection-tray ${expanded ? "selection-tray-expanded" : ""}`}>
+    {expanded && <div className="selection-tray-review">
+      <div className="selection-tray-review-heading"><div><p className="selection-tray-heading">Selected sessions</p><p className="selection-tray-copy">Review selections from every page.</p></div><span className="selection-tray-count" key={selectedCount}>{selectedCount.toLocaleString()}</span></div>
+      <div className="selection-tray-records">{entries.map(([id, record]) => <div key={id} className="selection-tray-record"><div className="min-w-0"><p className="selection-tray-title">{record.displayName}</p><p className="selection-tray-meta"><FolderKanban size={11}/><span className="truncate">{folderName(record.cwd)}</span><span aria-hidden="true">·</span><HardDrive size={11}/><span>{Number.isFinite(record.transcriptBytes) ? fileSize(record.transcriptBytes) : "No transcript"}</span></p></div><button type="button" onClick={() => onRemove(id)} aria-label={`Remove ${record.displayName} from selection`} className="icon-button"><X size={15}/></button></div>)}</div>
+    </div>}
+    <div className="selection-tray-bar">
+      <p aria-live="polite" className="selection-tray-summary"><span className="selection-tray-summary-value" key={summary}>{summary}</span></p>
+      <div className="selection-tray-actions"><button type="button" aria-expanded={expanded} onClick={onToggle} className="button secondary">{expanded ? "Hide review" : "Review"}</button><button type="button" onClick={onClear} className="button ghost">Clear</button><button type="button" disabled={isLoading || isPlanning} onClick={onDelete} className="button danger">{isPlanning ? <RefreshCw size={15} className="animate-spin"/> : <Trash2 size={15}/>} {isPlanning ? "Preparing" : "Delete"}</button></div>
     </div>
   </section>;
 }
 
-function Toggle({ checked, children, onChange }) {
-  return <label className={`toggle ${checked ? "toggle-active" : ""}`}><input checked={checked} onChange={(event) => onChange(event.target.checked)} type="checkbox"/><span className="toggle-track"><span/></span><span>{children}</span></label>;
-}
+function ShortcutSheet({ onClose }) {
+  const closeRef = useRef(null);
+  const groups = [
+    {
+      label: "Navigate",
+      shortcuts: [
+        { action: "Next session", keys: "J / ↓" },
+        { action: "Previous session", keys: "K / ↑" },
+        { action: "Open session details", keys: "Enter / O" },
+        { action: "Focus search", keys: "/" },
+        { action: "Previous or next page", keys: "[ / ]" },
+      ],
+    },
+    {
+      label: "Select",
+      shortcuts: [
+        { action: "Toggle cursor session", keys: "X" },
+        { action: "Move and select", keys: "Shift + J / K" },
+        { action: "Toggle this page", keys: "A" },
+        { action: "Close details or clear selection", keys: "Escape" },
+      ],
+    },
+    {
+      label: "Act",
+      shortcuts: [
+        { action: "Review cleanup", keys: "Backspace / Delete" },
+        { action: "Show or hide shortcuts", keys: "?" },
+      ],
+    },
+  ];
 
-function SessionRow({ inspected, onInspect, onToggle, record, selected }) {
-  const kind = getSessionKind(record);
-  const KindIcon = kind?.icon;
+  useEffect(() => {
+    const previousFocus = document.activeElement;
+    closeRef.current?.focus();
+    return () => {
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, []);
 
-  return <div className={`session-row group ${inspected ? "session-row-inspected" : ""} ${selected ? "session-row-selected" : ""}`}>
-    <label className="session-checkbox" aria-label={`Select ${record.displayName}`}><input checked={selected} onChange={() => onToggle(record.id)} type="checkbox"/></label>
-    <button type="button" onClick={() => onInspect(record.id)} className="min-w-0 text-left">
-      <span className="block truncate text-[14px] font-medium text-neutral-100 transition group-hover:text-white">{record.displayName}</span>
-      <span className="session-workspace"><FolderKanban size={12} className="shrink-0"/><span className="truncate" title={record.cwd || undefined}>{folderName(record.cwd)}</span>{record.archived && <span className="archive-tag"><Archive size={10}/>Archived</span>}</span>
-    </button>
-    <div className="flex shrink-0 flex-col items-end gap-1.5">
-      <span className="time-badge" title={fullDate(record.updatedAtMs)}><Clock3 size={11}/>{age(record.updatedAtMs)}</span>
-      {kind && <span className="kind-label"><KindIcon size={11}/>{kind.label}</span>}
-    </div>
-    <ChevronRight size={16} className="hidden shrink-0 text-neutral-700 transition group-hover:translate-x-0.5 group-hover:text-neutral-400 sm:block"/>
-  </div>;
+  return <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section role="dialog" aria-modal="true" aria-labelledby="shortcut-title" aria-describedby="shortcut-description" className="shortcut-panel"><div className="flex items-start justify-between gap-4"><div><p className="panel-label">Keyboard control</p><h2 id="shortcut-title" className="dialog-title">Keyboard shortcuts</h2><p id="shortcut-description" className="dialog-copy">Review and select sessions without leaving the keyboard.</p></div><button ref={closeRef} type="button" onClick={onClose} aria-label="Close keyboard shortcuts" className="icon-button"><X size={17}/></button></div><div className="shortcut-groups">{groups.map((group) => <section key={group.label}><h3>{group.label}</h3><dl>{group.shortcuts.map((shortcut) => <div key={shortcut.action}><dt>{shortcut.action}</dt><dd><kbd>{shortcut.keys}</kbd></dd></div>)}</dl></section>)}</div></section></div>;
 }
 
 function SessionSkeleton() {
-  return <div className="divide-y divide-white/[.055]" aria-label="Loading sessions">{Array.from({ length: 6 }, (_, index) => <div key={index} className="grid grid-cols-[32px_minmax(0,1fr)_80px] items-center gap-2 px-4 py-[1.15rem] sm:px-5"><div className="skeleton size-4 rounded"/><div><div className="skeleton h-4 w-[min(75%,30rem)] rounded"/><div className="skeleton mt-2 h-3 w-[min(50%,20rem)] rounded"/></div><div className="skeleton ml-auto h-6 w-16 rounded-full"/></div>)}</div>;
+  return <div className="session-rows" aria-label="Loading sessions">{Array.from({ length: 6 }, (_, index) => <div key={index} className="session-row session-row-skeleton"><div className="skeleton size-4 rounded"/><div className="min-w-0"><div className="skeleton h-3.5 w-[min(75%,30rem)] rounded"/><div className="skeleton mt-1.5 h-3 w-[min(50%,20rem)] rounded"/></div><div className="session-row-meta"><div className="skeleton badge-skeleton"/><div className="skeleton badge-skeleton"/><div className="skeleton badge-skeleton kind-skeleton"/></div><div/></div>)}</div>;
 }
 
 function EmptyState({ hasActiveFilters, onClear }) {
-  return <div className="grid min-h-[360px] place-items-center px-6 text-center"><div><div className="mx-auto grid size-11 place-items-center rounded-xl border border-white/[.08] bg-white/[.035] text-neutral-500"><Search size={19}/></div><h3 className="mt-4 text-sm font-semibold text-neutral-200">{hasActiveFilters ? "No sessions match these filters" : "No sessions found"}</h3><p className="mx-auto mt-1.5 max-w-sm text-xs leading-5 text-neutral-500">{hasActiveFilters ? "Adjust the filters to see more sessions." : "Session Steward did not find any sessions in this folder."}</p>{hasActiveFilters && <button type="button" onClick={onClear} className="button secondary mt-4">Clear filters</button>}</div></div>;
+  return <div className="empty-state"><div><div className="empty-state-icon"><Search size={19}/></div><h3>{hasActiveFilters ? "No sessions match these filters" : "No sessions found"}</h3><p>{hasActiveFilters ? "Adjust the filters to see more sessions." : "Session Steward did not find any sessions in this folder."}</p>{hasActiveFilters && <button type="button" onClick={onClear} className="button secondary mt-4">Clear filters</button>}</div></div>;
 }
 
 function Inspector({ onClose, providerName, record }) {
   return <><button type="button" aria-label="Close session details" onClick={onClose} className={`inspector-backdrop ${record ? "inspector-backdrop-open" : ""}`}/><aside className={`surface inspector ${record ? "inspector-open" : ""}`}>
-    <div className="flex items-center justify-between border-b border-white/[.07] px-5 py-4"><p className="eyebrow">Session details</p>{record && <button type="button" onClick={onClose} aria-label="Close session details" className="icon-button lg:hidden"><X size={16}/></button>}</div>
+    <div className="inspector-header"><p className="panel-label">Session details</p>{record && <button type="button" onClick={onClose} aria-label="Close session details" className="icon-button lg:hidden"><X size={16}/></button>}</div>
     {record
-      ? <div className="p-5"><div className="flex items-start gap-3"><div className="icon-tile"><FileText size={17}/></div><div className="min-w-0"><h2 className="break-words text-base font-normal leading-6 text-white">{record.displayName}</h2><p className="mt-1 break-all font-mono text-[10px] leading-4 text-neutral-600">{record.id}</p></div></div><dl className="mt-6 space-y-4"><Detail icon={Archive} label="Status" value={record.archived ? "Archived" : "Active"}/>{record.surface && <Detail icon={Bot} label="Used in" value={record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"}/>}<Detail icon={FolderKanban} label="Workspace" value={record.cwd || "Not recorded"}/><Detail icon={Clock3} label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail icon={FileText} label="Transcript" value={record.rolloutMissing ? "Missing" : "Available"}/><Detail icon={GitBranch} label="Relationship" value={record.isSubagent ? "Subagent" : record.isFork ? "Fork" : `Primary ${providerName} session`}/>{record.providerId === "codex" && <Detail icon={Database} label="Linked subagents" value={String(record.childThreadIds.length)}/>}</dl></div>
-      : <div className="grid min-h-[340px] place-items-center p-7 text-center"><div><div className="mx-auto grid size-12 place-items-center rounded-2xl border border-white/[.08] bg-white/[.03] text-neutral-500"><Info size={20}/></div><h2 className="mt-4 text-sm font-semibold text-neutral-300">Select a session</h2><p className="mx-auto mt-2 max-w-[230px] text-xs leading-5 text-neutral-500">Its location, activity, and linked sessions will appear here.</p></div></div>}
+      ? <div className="inspector-content"><div className="flex items-start gap-3"><div className="icon-tile"><FileText size={17}/></div><div className="min-w-0"><h2 className="inspector-title">{record.displayName}</h2><p className="inspector-id">{record.id}</p></div></div><dl className="inspector-details"><Detail icon={Archive} label="Status" value={record.archived ? "Archived" : "Active"}/>{record.surface && <Detail icon={Bot} label="Used in" value={record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"}/>}<Detail icon={FolderKanban} label="Workspace" value={record.cwd || "Not recorded"}/><Detail icon={Clock3} label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail icon={FileText} label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail icon={GitBranch} label="Relationship" value={record.isSubagent ? "Subagent" : record.isFork ? "Fork" : `Primary ${providerName} session`}/>{record.providerId === "codex" && <Detail icon={Database} label="Linked subagents" value={String(record.childThreadIds.length)}/>}</dl></div>
+      : <div className="inspector-empty"><div><div className="inspector-empty-icon"><Info size={18}/></div><h2>Select a session</h2><p>Its location, activity, and linked sessions will appear here.</p></div></div>}
   </aside></>;
 }
 
 function Detail({ icon: Icon, label, value }) {
-  return <div className="grid grid-cols-[18px_minmax(0,1fr)] gap-2.5 border-b border-white/[.055] pb-4 last:border-0 last:pb-0"><Icon size={14} className="mt-0.5 text-neutral-500"/><div><dt className="text-[11px] font-semibold uppercase tracking-[.11em] text-neutral-500">{label}</dt><dd className="mt-1 break-words text-[13px] leading-5 text-neutral-300">{value}</dd></div></div>;
+  return <div className="detail-row"><Icon size={14}/><div><dt>{label}</dt><dd>{value}</dd></div></div>;
 }
 
 function Pagination({ page, pages, numbers, setPage }) {
-  return <div className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-t border-white/[.07] px-4 py-2.5 sm:px-5"><span className="text-xs tabular-nums text-neutral-500">Page <strong className="font-medium text-neutral-300">{page}</strong> of {pages}</span><div className="flex items-center gap-1"><button aria-label="Previous page" disabled={page === 1} onClick={() => setPage(page - 1)} className="page-button"><ChevronLeft size={15}/></button><div className="hidden items-center gap-1 sm:flex">{numbers.map((number) => <button key={number} onClick={() => setPage(number)} aria-current={page === number ? "page" : undefined} className="page-button">{number}</button>)}</div><button aria-label="Next page" disabled={page === pages} onClick={() => setPage(page + 1)} className="page-button"><ChevronRight size={15}/></button></div></div>;
+  return <div className="pagination"><span>Page <strong>{page}</strong> of {pages}</span><div className="flex items-center gap-1"><button aria-label="Previous page" disabled={page === 1} onClick={() => setPage(page - 1)} className="page-button"><ChevronLeft size={15}/></button><div className="hidden items-center gap-1 sm:flex">{numbers.map((number) => <button key={number} onClick={() => setPage(number)} aria-current={page === number ? "page" : undefined} className="page-button">{number}</button>)}</div><button aria-label="Next page" disabled={page === pages} onClick={() => setPage(page + 1)} className="page-button"><ChevronRight size={15}/></button></div></div>;
 }
 
 function CompatibilityControl({ compatibility, compatibilityRef, expanded, onToggle, onClose }) {
@@ -850,17 +1345,17 @@ function CompatibilityControl({ compatibility, compatibilityRef, expanded, onTog
     ? { title: "Cleanup supported", text: `Session Steward recognizes this ${providerName} data.`, tone: "status-ready" }
     : compatibility.status === "newer-version"
       ? { title: "Review needed", text: `New ${providerName} session data was found and needs review.`, tone: "status-warning" }
-      : { title: "Update needed", text: `Thorough cleanup is paused because this ${providerName} version stores session data differently.`, tone: "status-error" };
+      : { title: "Update needed", text: `Thorough cleanup is paused because some ${providerName} session data is stored in a way Session Steward does not recognize yet.`, tone: "status-error" };
   const details = [...compatibility.missing, ...compatibility.changed, ...compatibility.newlyDiscovered];
 
-  return <div ref={compatibilityRef} className="relative"><button onClick={onToggle} aria-expanded={expanded} className={`status-pill ${copy.tone}`}><span/>{copy.title}</button>{expanded && <section className="compatibility-popover"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-white">Compatibility</p><p className="mt-1 text-xs leading-5 text-neutral-400">{copy.text}</p></div><button onClick={onClose} aria-label="Close compatibility details" className="icon-button"><X size={15}/></button></div><div className="mt-4 grid gap-2 border-t border-white/[.07] pt-4">{compatibility.providerId === "claude-code" ? <><VersionRow label="Claude Code CLI" support={compatibility.versionSupport?.claudeCli} value={compatibility.currentVersions.claudeCli}/><VersionRow label="Claude Desktop" support={compatibility.versionSupport?.claudeDesktop} value={compatibility.currentVersions.claudeDesktop}/></> : <><VersionRow label="ChatGPT" support={compatibility.versionSupport?.chatgptDesktop} value={compatibility.currentVersions.chatgptDesktop}/><VersionRow label="Codex" support={compatibility.versionSupport?.codexCli} value={compatibility.currentVersions.codexCli}/></>}</div><p className="mt-3 text-xs leading-5 text-neutral-500">Cleanup is enabled only when Session Steward recognizes the relevant session data.</p><ul className="mt-3 space-y-1.5 text-xs leading-5 text-neutral-400">{details.length > 0 ? details.map((detail) => <li key={detail} className="flex gap-2"><span className="mt-2 size-1 shrink-0 rounded-full bg-amber-300"/>{detail}</li>) : <li className="flex gap-2 text-neutral-500"><Check size={13} className="mt-0.5 text-emerald-400"/>No unexpected session data was found.</li>}</ul></section>}</div>;
+  return <div ref={compatibilityRef} className="relative"><button onClick={onToggle} aria-expanded={expanded} className={`status-pill ${copy.tone}`}><span/>{copy.title}</button>{expanded && <section className="compatibility-popover"><div className="flex items-start justify-between gap-3"><div><p className="popover-title">Compatibility</p><p className="popover-copy">{copy.text}</p></div><button onClick={onClose} aria-label="Close compatibility details" className="icon-button"><X size={15}/></button></div><div className="version-list">{compatibility.providerId === "claude-code" ? <><VersionRow label="Claude Code CLI" support={compatibility.versionSupport?.claudeCli} value={compatibility.currentVersions.claudeCli}/><VersionRow label="Claude Desktop" support={compatibility.versionSupport?.claudeDesktop} value={compatibility.currentVersions.claudeDesktop}/></> : <><VersionRow label="ChatGPT" support={compatibility.versionSupport?.chatgptDesktop} value={compatibility.currentVersions.chatgptDesktop}/><VersionRow label="Codex" support={compatibility.versionSupport?.codexCli} value={compatibility.currentVersions.codexCli}/></>}</div><p className="compatibility-note">Cleanup depends on the session data Session Steward finds, not on the version you have installed. A newer version on its own does not affect cleanup.</p><ul className="compatibility-details">{details.length > 0 ? details.map((detail) => <li key={detail}><span className="semantic-dot warning-dot"/>{detail}</li>) : <li><Check size={13} className="success-icon"/>No unexpected session data was found.</li>}</ul></section>}</div>;
 }
 
 function VersionRow({ label, support, value }) {
-  return <div className="flex items-center justify-between gap-4 rounded-lg bg-white/[.025] px-3 py-2.5"><div><p className="text-xs font-medium text-neutral-300">{label}</p><p className="mt-0.5 font-mono text-[11px] text-neutral-500">{value || "Not found"}</p></div><span className="text-right text-[11px] text-neutral-500">{versionStatus(support)}</span></div>;
+  return <div className="version-row"><div><p>{label}</p><code>{value || "Not found"}</code></div><span>{versionStatus(support)}</span></div>;
 }
 
-function DeletionDialog({ isDeleting, onCancelCleanup, onClose, onDelete, onDeleteBackup, onRestore, onScopeChange, operation, plan, planError, planNotice, providerId, providerName, scope }) {
+function DeletionDialog({ isDeleting, isPlanRefreshing, onCancelCleanup, onClose, onDelete, onDeleteBackup, onRestore, onScopeChange, operation, plan, planError, planNotice, providerId, providerName, scope }) {
   const [confirmingRestore, setConfirmingRestore] = useState(false);
   const [confirmingBackupDelete, setConfirmingBackupDelete] = useState(false);
   const active = operation && ["queued", "running", "restoring"].includes(operation.status);
@@ -873,33 +1368,44 @@ function DeletionDialog({ isDeleting, onCancelCleanup, onClose, onDelete, onDele
     setConfirmingBackupDelete(false);
   }, [operation?.id, operation?.canDeleteBackup, operation?.canRestore]);
 
-  const progressTone = hasFailed ? "bg-rose-400" : needsAttention ? "bg-amber-300" : operation?.status === "restored" ? "bg-sky-400" : "bg-emerald-400";
-  const errorTone = needsAttention ? "text-amber-100" : "text-rose-200";
+  const progressTone = hasFailed ? "progress-danger" : needsAttention ? "progress-warning" : operation?.status === "restored" ? "progress-info" : "progress-success";
+  const errorTone = needsAttention ? "message-warning" : "message-danger";
 
-  return <div className="dialog-backdrop"><section role="dialog" aria-modal="true" aria-labelledby="delete-title" className="dialog-panel"><div className="flex items-start justify-between gap-4"><div><div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.16em] text-rose-300"><ShieldCheck size={13}/> Session cleanup</div><h2 id="delete-title" className="text-xl font-semibold tracking-tight text-white">{operation ? operation.message : "Review selected sessions"}</h2><p className="mt-1.5 text-sm leading-6 text-neutral-500">Session Steward creates a local backup before cleanup begins.</p></div><button disabled={active} onClick={onClose} aria-label="Close cleanup" className="icon-button"><X size={17}/></button></div>
-    {!operation && <div className="mt-5 grid gap-3 sm:grid-cols-2"><Scope checked={scope === "core"} disabled={isDeleting} title="Standard cleanup" text={providerId === "claude-code" ? "Removes the selected local sessions, transcripts, history, and linked session artifacts." : "Removes the sessions, transcripts, history, logs, and linked subagents."} onClick={() => onScopeChange("core")}/><Scope checked={scope === "deep"} disabled={isDeleting} title="Thorough cleanup" text={providerId === "claude-code" ? "Also removes recognized file checkpoints owned by these sessions. Worktrees are always kept." : "Also removes supported Desktop references, saved memory, and goals."} onClick={() => onScopeChange("deep")}/></div>}
-    {planError && <div role="alert" className="mt-4 rounded-xl border border-rose-400/20 bg-rose-400/[.07] p-3 text-sm text-rose-100">{planError}</div>}
-    {planNotice && <div role="status" className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/[.06] p-3 text-sm text-amber-100">{planNotice}</div>}
-    {plan
-      ? <div className="mt-5 grid grid-cols-2 gap-2.5 sm:grid-cols-4"><Metric label="Sessions to remove" value={plan.sessionCount}/><Metric label="Files to remove" value={plan.transcriptCount}/><Metric label="Session files size" value={fileSize(plan.transcriptBytes)}/><Metric label="Records to remove" value={plan.relatedRecordCount}/></div>
-      : <div className="mt-5 h-[76px] animate-pulse rounded-xl bg-white/[.025]"/>}
-    {!operation && plan && <div className="mt-3 flex gap-2.5 text-xs leading-5 text-neutral-500"><HardDrive size={14} className="mt-0.5 shrink-0"/><p>About {fileSize(plan.estimatedBackupBytes)} of temporary free space is needed for a recovery backup. It is removed after cleanup is verified.</p></div>}
-    {plan?.childCount > 0 && <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-neutral-400"><GitBranch size={13} className="mt-1 shrink-0 text-amber-300"/><span>{plan.childCount} linked {plan.childCount === 1 ? "session is" : "sessions are"} included.{plan.newestLinkedActivityAtMs ? ` Newest linked activity was ${age(plan.newestLinkedActivityAtMs)}.` : " Linked activity was not recorded."}</span></p>}
-    {plan?.warnings?.map((warning) => <p key={warning} className="mt-3 flex items-start gap-2 text-xs leading-5 text-amber-100"><AlertTriangle size={13} className="mt-1 shrink-0 text-amber-300"/><span>{warning}</span></p>)}
-    {operation && <div className="mt-5 rounded-xl border border-white/[.08] bg-white/[.025] p-4"><div className="flex items-center justify-between gap-4 text-sm"><span role="status" aria-live="polite" aria-atomic="true" className="font-medium text-neutral-300">{operation.message}</span><span className="tabular-nums text-neutral-500">{progress}%</span></div><div role="progressbar" aria-label="Cleanup progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress} aria-valuetext={operation.message} className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[.07]"><div className={`h-full rounded-full transition-all ${progressTone}`} style={{ width: `${progress}%` }}/></div>{operation.error && <p className={`mt-3 text-xs leading-5 ${errorTone}`}>{operation.error}</p>}{operation.backupDeleteError && <p className="mt-3 text-xs leading-5 text-amber-100">{operation.backupDeleteError}</p>}{operation.canRestore && <div className="mt-3 space-y-2 text-xs leading-5 text-neutral-400"><p>Restore returns these sessions to their pre-cleanup state. Current files are backed up first.</p>{operation.backupDirectory && <div><p className="text-neutral-500">Recovery backup location</p><p className="break-all font-mono text-[11px] text-neutral-400">{operation.backupDirectory}</p></div>}</div>}</div>}
-    {confirmingRestore && operation?.canRestore && <div role="alert" className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/[.06] p-4"><p className="text-sm font-semibold text-amber-100">Restore these sessions?</p><p className="mt-1.5 text-xs leading-5 text-amber-100/75">This replaces the affected {providerName} session data with the recovery backup. Session Steward saves the current files first.</p></div>}
-    {confirmingBackupDelete && operation?.canDeleteBackup && <div role="alert" className="mt-4 rounded-xl border border-rose-300/20 bg-rose-300/[.06] p-4"><p className="text-sm font-semibold text-rose-100">Delete this recovery backup?</p><p className="mt-1.5 text-xs leading-5 text-rose-100/75">You will no longer be able to restore these sessions from this backup.</p></div>}
-    {!operation && <div className="mt-5 flex gap-3 rounded-xl border border-amber-300/15 bg-amber-300/[.045] p-3.5"><AlertTriangle size={17} className="mt-0.5 shrink-0 text-amber-300"/><p className="text-xs leading-5 text-amber-100/80"><strong className="font-semibold text-amber-100">Close selected {providerName} sessions first.</strong> Session Steward blocks sessions it can identify as running; closing them also prevents last-second changes.</p></div>}
-    <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">{!operation && <button disabled={isDeleting} onClick={onClose} className="button ghost">Cancel</button>}{!operation && <button disabled={isDeleting || !plan} onClick={onDelete} className="button danger min-w-40"><Trash2 size={15}/>{isDeleting ? "Starting cleanup…" : "Delete selected sessions"}</button>}{active && operation.canCancel && <button disabled={operation.cancelRequested} onClick={onCancelCleanup} className="button ghost">{operation.cancelRequested ? "Cancellation requested" : "Cancel cleanup"}</button>}{operation && !active && !confirmingRestore && !confirmingBackupDelete && <button onClick={onClose} className="button secondary">{operation.canRestore ? "Keep backup" : "Close"}</button>}{operation?.canDeleteBackup && !confirmingRestore && !confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingBackupDelete(true)} className="button ghost">Delete backup</button>}{operation?.canRestore && !confirmingRestore && !confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingRestore(true)} className="button primary">Restore backup</button>}{confirmingRestore && <button disabled={isDeleting} onClick={() => setConfirmingRestore(false)} className="button ghost">Cancel</button>}{confirmingRestore && <button disabled={isDeleting} onClick={onRestore} className="button primary">{isDeleting ? "Restoring…" : "Restore sessions"}</button>}{confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingBackupDelete(false)} className="button ghost">Cancel</button>}{confirmingBackupDelete && <button disabled={isDeleting} onClick={onDeleteBackup} className="button danger">{isDeleting ? "Deleting…" : "Delete backup"}</button>}</div>
+  return <div className="dialog-backdrop"><section role="dialog" aria-modal="true" aria-labelledby="delete-title" className="dialog-panel"><div className="flex items-start justify-between gap-4"><div><div className="cleanup-eyebrow"><ShieldCheck size={13}/> Session cleanup</div><h2 id="delete-title" className="dialog-title">{operation ? operation.message : "Review selected sessions"}</h2><p className="dialog-copy">Session Steward creates a local backup before cleanup begins.</p></div><button disabled={active} onClick={onClose} aria-label="Close cleanup" className="icon-button"><X size={17}/></button></div>
+    {!operation && <div className="mt-5 grid gap-3 sm:grid-cols-2"><Scope checked={scope === "core"} disabled={isDeleting || isPlanRefreshing} title="Standard cleanup" text={providerId === "claude-code" ? "Removes the selected local sessions, transcripts, history, and linked session artifacts." : "Removes the sessions, transcripts, history, logs, and linked subagents."} onClick={() => onScopeChange("core")}/><Scope checked={scope === "deep"} disabled={isDeleting || isPlanRefreshing} title="Thorough cleanup" text={providerId === "claude-code" ? "Also removes recognized file checkpoints owned by these sessions. Worktrees are always kept." : "Also removes supported Desktop references, saved memory, and goals."} onClick={() => onScopeChange("deep")}/></div>}
+    {planError && <div role="alert" className="dialog-message message-danger">{planError}</div>}
+    {planNotice && <div role="status" className="dialog-message message-warning">{planNotice}</div>}
+    <div className="dialog-plan-region" aria-busy={isPlanRefreshing}>
+      {plan
+        ? <><div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4"><Metric label="Sessions to remove" value={plan.sessionCount}/><Metric label="Files to remove" value={plan.transcriptCount}/><Metric label="Session files size" value={fileSize(plan.transcriptBytes)}/><Metric label="Records to remove" value={plan.relatedRecordCount}/></div>
+          {!operation && <div className="dialog-note"><HardDrive size={14}/><p>About {fileSize(plan.estimatedBackupBytes)} of temporary free space is needed for a recovery backup. It is removed after cleanup is verified.</p></div>}
+          {plan.childCount > 0 && <p className="dialog-information"><GitBranch size={13}/><span>{plan.childCount} linked {plan.childCount === 1 ? "session is" : "sessions are"} included.{plan.newestLinkedActivityAtMs ? ` Newest linked activity was ${age(plan.newestLinkedActivityAtMs)}.` : " Linked activity was not recorded."}</span></p>}
+          {plan.warnings?.map((warning) => <p key={warning} className="dialog-information"><AlertTriangle size={13}/><span>{warning}</span></p>)}</>
+        : <div className="metric-skeleton skeleton"/>}
+      {isPlanRefreshing && <div className="dialog-plan-loading" role="status"><RefreshCw size={16} className="animate-spin"/><span>Updating cleanup details</span></div>}
+    </div>
+    {operation && <div className="operation-panel"><div className="operation-heading"><span role="status" aria-live="polite" aria-atomic="true">{operation.message}</span><span>{progress}%</span></div><div role="progressbar" aria-label="Cleanup progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress} aria-valuetext={operation.message} className="progress-track"><div className={`progress-value ${progressTone}`} style={{ width: `${progress}%` }}/></div>{operation.error && <p className={`operation-error ${errorTone}`}>{operation.error}</p>}{operation.backupDeleteError && <p className="operation-error message-warning">{operation.backupDeleteError}</p>}{operation.canRestore && <div className="restore-copy"><p>Restore returns these sessions to their pre-cleanup state. Current files are backed up first.</p>{operation.backupDirectory && <div><p>Recovery backup location</p><code>{operation.backupDirectory}</code></div>}</div>}</div>}
+    {confirmingRestore && operation?.canRestore && <div role="alert" className="dialog-confirmation message-warning"><p>Restore these sessions?</p><span>This replaces the affected {providerName} session data with the recovery backup. Session Steward saves the current files first.</span></div>}
+    {confirmingBackupDelete && operation?.canDeleteBackup && <div role="alert" className="dialog-confirmation message-danger"><p>Delete this recovery backup?</p><span>You will no longer be able to restore these sessions from this backup.</span></div>}
+    {!operation && <div className="dialog-information close-session-note"><AlertTriangle size={17}/><p><strong>Close selected {providerName} sessions first.</strong> Session Steward blocks sessions it can identify as running; closing them also prevents last-second changes.</p></div>}
+    <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">{!operation && <button disabled={isDeleting} onClick={onClose} className="button ghost">Cancel</button>}{!operation && <button disabled={isDeleting || isPlanRefreshing || !plan} onClick={onDelete} className="button danger min-w-40"><Trash2 size={15}/>{isDeleting ? "Starting cleanup…" : "Delete selected sessions"}</button>}{active && operation.canCancel && <button disabled={operation.cancelRequested} onClick={onCancelCleanup} className="button ghost">{operation.cancelRequested ? "Cancellation requested" : "Cancel cleanup"}</button>}{operation && !active && !confirmingRestore && !confirmingBackupDelete && <button onClick={onClose} className="button secondary">{operation.canRestore ? "Keep backup" : "Close"}</button>}{operation?.canDeleteBackup && !confirmingRestore && !confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingBackupDelete(true)} className="button ghost">Delete backup</button>}{operation?.canRestore && !confirmingRestore && !confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingRestore(true)} className="button primary">Restore backup</button>}{confirmingRestore && <button disabled={isDeleting} onClick={() => setConfirmingRestore(false)} className="button ghost">Cancel</button>}{confirmingRestore && <button disabled={isDeleting} onClick={onRestore} className="button primary">{isDeleting ? "Restoring…" : "Restore sessions"}</button>}{confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingBackupDelete(false)} className="button ghost">Cancel</button>}{confirmingBackupDelete && <button disabled={isDeleting} onClick={onDeleteBackup} className="button danger">{isDeleting ? "Deleting…" : "Delete backup"}</button>}</div>
   </section></div>;
 }
 
 function Metric({ label, value }) {
-  return <div className="rounded-xl border border-white/[.07] bg-white/[.025] p-3"><p className="min-h-8 text-[10px] font-semibold uppercase leading-4 tracking-[.1em] text-neutral-600">{label}</p><p className="mt-1 truncate text-sm font-semibold tabular-nums text-neutral-200">{value}</p></div>;
+  return <div className="metric"><p>{label}</p><strong>{value}</strong></div>;
 }
 
 function Scope({ checked, disabled, onClick, text, title }) {
-  return <button disabled={disabled} aria-pressed={checked} onClick={onClick} className={`scope-card ${checked ? "scope-card-active" : ""}`}><div className="flex items-center justify-between gap-2"><span className="font-medium text-neutral-100">{title}</span><span className={`grid size-5 place-items-center rounded-full border ${checked ? "border-emerald-300 bg-emerald-300 text-emerald-950" : "border-white/15"}`}>{checked && <Check size={12} strokeWidth={3}/>}</span></div><p className="mt-2 text-xs leading-5 text-neutral-500">{text}</p></button>;
+  return <button disabled={disabled} aria-pressed={checked} onClick={onClick} className={`scope-card ${checked ? "scope-card-active" : ""}`}><div className="scope-heading"><span>{title}</span><span className="scope-check">{checked && <Check size={12} strokeWidth={3}/>}</span></div><p>{text}</p></button>;
+}
+
+function AnthropicIcon({ size }) {
+  return <svg aria-hidden="true" className="provider-icon" height={size} viewBox="0 0 24 24" width={size} xmlns="http://www.w3.org/2000/svg"><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z" fill="currentColor"/></svg>;
+}
+
+function OpenAIIcon({ size }) {
+  return <svg aria-hidden="true" className="provider-icon" height={size} viewBox="0 0 20 20" width={size} xmlns="http://www.w3.org/2000/svg"><path d="M11.248 18.25q-.825 0-1.568-.314a4.3 4.3 0 0 1-1.32-.874 4 4 0 0 1-1.304.214 4 4 0 0 1-2.046-.544 4.27 4.27 0 0 1-1.518-1.485 4 4 0 0 1-.56-2.095q0-.48.131-1.04A4.4 4.4 0 0 1 2.04 10.71a4.07 4.07 0 0 1 .017-3.4 4.2 4.2 0 0 1 1.056-1.418 3.8 3.8 0 0 1 1.6-.842 3.9 3.9 0 0 1 .76-1.683q.593-.759 1.451-1.188a4.04 4.04 0 0 1 1.832-.429q.825 0 1.567.313.742.314 1.32.875a4 4 0 0 1 1.304-.215q1.106 0 2.046.545a4.14 4.14 0 0 1 1.501 1.485q.578.941.578 2.095 0 .48-.132 1.04.66.61 1.023 1.419.363.792.363 1.666 0 .892-.38 1.717a4.3 4.3 0 0 1-1.072 1.435 3.8 3.8 0 0 1-1.584.825 3.8 3.8 0 0 1-.775 1.683 4.06 4.06 0 0 1-1.436 1.188 4.04 4.04 0 0 1-1.832.429m-4.076-2.062q.825 0 1.435-.347l3.103-1.782a.36.36 0 0 0 .164-.313v-1.42L7.881 14.62a.67.67 0 0 1-.726 0l-3.118-1.798a.5.5 0 0 1-.017.115v.198q0 .841.396 1.551.413.693 1.139 1.089a3.2 3.2 0 0 0 1.617.412m.165-2.69a.4.4 0 0 0 .181.05q.083 0 .165-.05l1.238-.71-3.977-2.31a.7.7 0 0 1-.363-.643v-3.58q-.825.362-1.32 1.122a2.9 2.9 0 0 0-.495 1.65q0 .809.413 1.55.412.743 1.072 1.123zm3.91 3.663q.875 0 1.585-.396a2.96 2.96 0 0 0 1.534-2.64v-3.564a.32.32 0 0 0-.165-.297l-1.254-.726v4.604a.7.7 0 0 1-.363.643l-3.119 1.799a3 3 0 0 0 1.783.577m.627-6.039V8.878L10.01 7.822 8.129 8.878v2.244l1.881 1.056zM7.057 5.859a.7.7 0 0 1 .363-.644l3.119-1.798a3 3 0 0 0-1.782-.578q-.874 0-1.584.396A2.96 2.96 0 0 0 6.05 4.324a3.07 3.07 0 0 0-.396 1.551v3.547q0 .199.165.314l1.237.726zm8.383 7.887q.825-.364 1.303-1.123.495-.758.495-1.65a3.15 3.15 0 0 0-.412-1.55q-.413-.743-1.073-1.123l-3.086-1.782q-.099-.065-.181-.049a.3.3 0 0 0-.165.05l-1.238.692 3.993 2.327a.6.6 0 0 1 .264.264.64.64 0 0 1 .1.363zm-3.317-8.382a.63.63 0 0 1 .726 0l3.135 1.831v-.297q0-.792-.396-1.501a2.86 2.86 0 0 0-1.105-1.155q-.71-.43-1.65-.43-.825 0-1.436.347L8.294 5.941a.36.36 0 0 0-.165.314v1.418z" fill="currentColor"/></svg>;
 }
 
 createRoot(document.getElementById("root")).render(<App/>);

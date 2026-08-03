@@ -24,6 +24,170 @@ test("Claude discovery separates CLI and linked Desktop sessions", async (contex
   assert.equal(store.recordsById.get(fixture.desktopId).cwd, "/workspace/demo");
 });
 
+test("Claude activity ignores Desktop view timestamps and transcript touches", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  const expectedActivityAtMs = Date.parse("2026-01-01T00:00:01.000Z");
+  let store = await claude.loadSessionStore(fixture);
+  assert.equal(store.recordsById.get(fixture.desktopId).updatedAtMs, expectedActivityAtMs);
+
+  const touchedAt = new Date("2026-03-01T00:00:00.000Z");
+  await fs.utimes(fixture.desktopTranscript, touchedAt, touchedAt);
+  claude.invalidateSessionCache(fixture);
+  store = await claude.loadSessionStore(fixture);
+
+  assert.equal(store.recordsById.get(fixture.desktopId).updatedAtMs, expectedActivityAtMs);
+});
+
+test("Claude activity advances only when conversation content is appended", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  const originalActivityAtMs = Date.parse("2026-01-01T00:00:01.000Z");
+  await claude.loadSessionStore(fixture);
+
+  await fs.appendFile(
+    fixture.cliTranscript,
+    `${JSON.stringify({ sessionId: fixture.cliId, type: "last-prompt" })}\n`,
+  );
+  claude.invalidateSessionCache(fixture);
+  let store = await claude.loadSessionStore(fixture);
+  assert.equal(store.recordsById.get(fixture.cliId).updatedAtMs, originalActivityAtMs);
+
+  const appendedActivityAt = "2026-02-01T00:00:00.000Z";
+  await fs.appendFile(
+    fixture.cliTranscript,
+    `${JSON.stringify({ message: { content: "Continue" }, sessionId: fixture.cliId, timestamp: appendedActivityAt, type: "user" })}\n`,
+  );
+  claude.invalidateSessionCache(fixture);
+  store = await claude.loadSessionStore(fixture);
+  assert.equal(store.recordsById.get(fixture.cliId).updatedAtMs, Date.parse(appendedActivityAt));
+});
+
+test("Claude activity detects same-size transcript replacement", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  await claude.loadSessionStore(fixture);
+  const original = await fs.readFile(fixture.cliTranscript, "utf8");
+  const replacement = original.replace(
+    "2026-01-01T00:00:01.000Z",
+    "2026-01-05T00:00:01.000Z",
+  );
+  assert.equal(Buffer.byteLength(replacement), Buffer.byteLength(original));
+  await fs.writeFile(fixture.cliTranscript, replacement);
+  const replacedAt = new Date("2026-01-06T00:00:00.000Z");
+  await fs.utimes(fixture.cliTranscript, replacedAt, replacedAt);
+  claude.invalidateSessionCache(fixture);
+
+  const store = await claude.loadSessionStore(fixture);
+  assert.equal(
+    store.recordsById.get(fixture.cliId).updatedAtMs,
+    Date.parse("2026-01-05T00:00:01.000Z"),
+  );
+});
+
+test("Claude activity tolerates a transcript line while it is being written", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  const originalActivityAtMs = Date.parse("2026-01-01T00:00:01.000Z");
+  const appendedActivityAt = "2026-02-02T00:00:00.000Z";
+  await claude.loadSessionStore(fixture);
+  await fs.appendFile(
+    fixture.cliTranscript,
+    `{"sessionId":"${fixture.cliId}","timestamp":"${appendedActivityAt}","type":"user"`,
+  );
+  claude.invalidateSessionCache(fixture);
+  let store = await claude.loadSessionStore(fixture);
+  assert.equal(store.recordsById.get(fixture.cliId).updatedAtMs, originalActivityAtMs);
+
+  await fs.appendFile(fixture.cliTranscript, "}\n");
+  claude.invalidateSessionCache(fixture);
+  store = await claude.loadSessionStore(fixture);
+  assert.equal(store.recordsById.get(fixture.cliId).updatedAtMs, Date.parse(appendedActivityAt));
+});
+
+test("Claude activity reads across a large final conversation record", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  const appendedActivityAt = "2026-02-03T00:00:00.000Z";
+  await fs.appendFile(
+    fixture.cliTranscript,
+    `${JSON.stringify({ message: { content: "x".repeat(2 * 1024 * 1024) }, sessionId: fixture.cliId, timestamp: appendedActivityAt, type: "assistant" })}\n`,
+  );
+  claude.invalidateSessionCache(fixture);
+
+  const store = await claude.loadSessionStore(fixture);
+  assert.equal(store.recordsById.get(fixture.cliId).updatedAtMs, Date.parse(appendedActivityAt));
+});
+
+test("Claude cleans compacted markers and Markdown links without narrowing search", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  const lines = (await fs.readFile(fixture.cliTranscript, "utf8"))
+    .trimEnd()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  lines[1].message.content = "[2] user: Read [release.md](private/raw-release-target) [3] assistant: Working on it";
+  await fs.writeFile(
+    fixture.cliTranscript,
+    `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+  );
+  claude.invalidateSessionCache(fixture);
+
+  const result = await claude.listSessions({
+    ...fixture,
+    page: 1,
+    pageSize: 25,
+    search: "private/raw-release-target",
+  });
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].displayName, "Read release.md");
+});
+
+test("Claude JSON records include the combined transcript size", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  await fs.copyFile(
+    fixture.cliTranscript,
+    path.join(path.dirname(fixture.cliTranscript), "duplicate-cli-transcript.jsonl"),
+  );
+  const store = await claude.loadSessionStore(fixture);
+  const record = store.recordsById.get(fixture.cliId);
+  const transcriptBytes = (await Promise.all(
+    record.transcriptPaths.map((transcriptPath) => fs.stat(transcriptPath)),
+  )).reduce((sum, stats) => sum + stats.size, 0);
+
+  assert.equal(claude.formatSessionForJson(record).transcriptBytes, transcriptBytes);
+});
+
+test("Claude overview includes transcript size per workspace", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  const store = await claude.loadSessionStore(fixture);
+  const expectedBytes = store.records.reduce(
+    (sum, record) => sum + record.transcriptBytes,
+    0,
+  );
+  const overview = await claude.getSessionOverview({ ...fixture, refresh: true });
+  assert.equal(overview.workspaces.length, 1);
+  assert.equal(overview.workspaces[0].path, "/workspace/demo");
+  assert.equal(overview.workspaces[0].transcriptBytes, expectedBytes);
+});
+
+test("Claude sorts the full filtered collection by transcript size", async (context) => {
+  const fixture = await createClaudeHomeFixture({ extraSessions: 30 });
+  context.after(() => removeClaudeHomeFixture(fixture));
+  await fs.appendFile(fixture.cliTranscript, "x".repeat(32 * 1024));
+  claude.invalidateSessionCache(fixture);
+  const result = await claude.listSessions({
+    ...fixture,
+    page: 1,
+    pageSize: 2,
+    sort: "size",
+  });
+  assert.equal(result.total, 33);
+  assert.equal(result.records[0].id, fixture.cliId);
+});
+
 test("Claude standard cleanup removes exact artifacts and restores them without touching worktrees", async (context) => {
   const fixture = await createClaudeHomeFixture();
   context.after(() => removeClaudeHomeFixture(fixture));
@@ -37,6 +201,13 @@ test("Claude standard cleanup removes exact artifacts and restores them without 
   assert.ok(plan.transcriptPaths.includes(fixture.desktopStatePath));
   const result = await claude.executeSessionDeletion({ plan, scope: "core", store });
   assert.equal((await claude.verifySessionDeletion({ plan, scope: "core", store })).complete, true);
+  const backups = await claude.listSessionDeletionBackups({ claudeHome: fixture.claudeHome });
+  assert.equal(backups.length, 1);
+  assert.equal(backups[0].backupDirectory, result.backupDirectory);
+  assert.equal(backups[0].restorable, true);
+  assert.equal(backups[0].scope, "core");
+  assert.equal(backups[0].bytes > 0, true);
+  assert.equal(backups[0].fileCount > 0, true);
   assert.equal(await fs.readFile(worktreeRegistry, "utf8"), worktreeBefore);
   assert.equal(await fs.readFile(fixture.unrelatedTranscript, "utf8"), unrelatedBefore);
   await fs.appendFile(path.join(fixture.claudeHome, "history.jsonl"), `${JSON.stringify({ display: "created after cleanup", sessionId: fixture.unrelatedId, timestamp: 4 })}\n`);

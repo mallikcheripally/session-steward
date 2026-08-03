@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import test from "node:test";
 
@@ -38,6 +39,107 @@ test("Codex discovery preserves relationships and readable names", async (contex
   assert.match(archived.rolloutPath, /archived_sessions/u);
 });
 
+async function listParentWithTitle(context, title, { firstUserMessage = "Fallback title", search = "" } = {}) {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const database = new DatabaseSync(path.join(fixture.codexHome, "state_5.sqlite"));
+  try {
+    database.prepare("update threads set title = ?, first_user_message = ? where id = ?")
+      .run(title, firstUserMessage, fixtureSessionIds.parent);
+  } finally {
+    database.close();
+  }
+  const result = await codex.listSessions({
+    codexHome: fixture.codexHome,
+    includeInternals: true,
+    includeSupporting: true,
+    search,
+  });
+  return result.records.find(({ id }) => id === fixtureSessionIds.parent);
+}
+
+test("Codex titles remove a leading compacted role marker", async (context) => {
+  const record = await listParentWithTitle(context, "[2] user: Review the release");
+  assert.equal(record.displayName, "Review the release");
+});
+
+test("Codex titles stop at the next compacted role marker", async (context) => {
+  const record = await listParentWithTitle(context, "Review the release [3] assistant: Working on it");
+  assert.equal(record.displayName, "Review the release");
+});
+
+test("Codex titles render one Markdown link as its label", async (context) => {
+  const record = await listParentWithTitle(context, "Read [release.md](docs/release.md)");
+  assert.equal(record.displayName, "Read release.md");
+});
+
+test("Codex titles render repeated Markdown links as labels", async (context) => {
+  const record = await listParentWithTitle(context, "Compare [one.md](docs/one.md) and [two.md](docs/two.md)");
+  assert.equal(record.displayName, "Compare one.md and two.md");
+});
+
+test("Codex title cleanup keeps punctuation-only results conservative", async (context) => {
+  const original = "[2] user: --- [3] assistant: Working on it";
+  const record = await listParentWithTitle(context, original);
+  assert.equal(record.displayName, original);
+});
+
+test("Codex titles without cleanup patterns pass through unchanged", async (context) => {
+  const original = "Review the release dashboard";
+  const record = await listParentWithTitle(context, original);
+  assert.equal(record.displayName, original);
+});
+
+test("Codex cleans the first-message fallback after an empty title", async (context) => {
+  const record = await listParentWithTitle(context, "", {
+    firstUserMessage: "[2] user: Read [release.md](docs/release.md)",
+  });
+  assert.equal(record.displayName, "Read release.md");
+});
+
+test("Codex search continues matching text only present in a raw title", async (context) => {
+  const record = await listParentWithTitle(
+    context,
+    "Read [release.md](private/raw-release-target)",
+    { search: "private/raw-release-target" },
+  );
+  assert.equal(record.displayName, "Read release.md");
+});
+
+test("Codex discovery cleans names sourced from the session index", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  await writeFile(
+    path.join(fixture.codexHome, "session_index.jsonl"),
+    `${JSON.stringify({ id: fixtureSessionIds.parent, thread_name: "[2] user: Read [release.md](docs/release.md)", updated_at: "2026-07-01T11:00:00.000Z" })}\n`,
+  );
+  const store = await codex.loadSessionStore({ codexHome: fixture.codexHome });
+  assert.equal(store.recordsById.get(fixtureSessionIds.parent).displayName, "Read release.md");
+});
+
+test("Codex list records expose transcript size and tolerate missing files", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+
+  const listed = await codex.listSessions({
+    codexHome: fixture.codexHome,
+    includeInternals: true,
+    includeSupporting: true,
+  });
+  const parent = listed.records.find(({ id }) => id === fixtureSessionIds.parent);
+  assert.equal(
+    parent.transcriptBytes,
+    (await readFile(fixture.transcripts.parent)).length,
+  );
+
+  await rm(fixture.transcripts.standalone);
+  const missing = await codex.getSessionRecord({
+    codexHome: fixture.codexHome,
+    id: fixtureSessionIds.standalone,
+  });
+  assert.equal(missing.transcriptBytes, null);
+});
+
 test("Codex cleanup backs up and removes archived transcripts", async (context) => {
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
@@ -54,8 +156,16 @@ test("Codex cleanup backs up and removes archived transcripts", async (context) 
   assert.deepEqual(plan.transcriptPaths, [fixture.transcripts.standalone]);
   const result = await codex.executeSessionDeletion({ plan, scope: "core", store });
   const verification = await codex.verifySessionDeletion({ plan, scope: "core", store });
+  const backups = await codex.listSessionDeletionBackups({ codexHome: fixture.codexHome });
 
   assert.equal(verification.complete, true);
+  assert.equal(backups.length, 1);
+  assert.equal(backups[0].backupDirectory, result.backupDirectory);
+  assert.equal(backups[0].restorable, true);
+  assert.equal(backups[0].scope, "core");
+  assert.equal(backups[0].sessionCount, 1);
+  assert.equal(backups[0].bytes > 0, true);
+  assert.equal(backups[0].fileCount > 0, true);
   await assert.rejects(access(fixture.transcripts.standalone), { code: "ENOENT" });
   await access(path.join(
     result.backupDirectory,

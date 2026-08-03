@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +9,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createProviderSettings } from "../lib/settings.mjs";
+import { getProvider } from "../lib/providers/index.mjs";
+import { queryRows } from "../lib/storage/sqlite.mjs";
 import {
   createCodexHomeFixture,
   createLargeCodexHomeFixture,
@@ -27,6 +29,48 @@ async function runCli(args, xdgConfigHome) {
     env: { ...process.env, XDG_CONFIG_HOME: xdgConfigHome },
   });
   return stdout;
+}
+
+async function runInteractiveCli(args, steps, xdgConfigHome) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [cliPath, ...args], {
+      cwd: repositoryRoot,
+      env: { ...process.env, XDG_CONFIG_HOME: xdgConfigHome },
+    });
+    let stdout = "";
+    let stderr = "";
+    let nextStep = 0;
+    let searchFrom = 0;
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(Object.assign(new Error("The interactive CLI test timed out."), { stderr, stdout }));
+    }, 10_000);
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+
+      while (nextStep < steps.length) {
+        const step = steps[nextStep];
+        const promptIndex = stdout.indexOf(step.prompt, searchFrom);
+        if (promptIndex < 0) break;
+        searchFrom = promptIndex + step.prompt.length;
+        nextStep += 1;
+        child.stdin.write(`${step.response}\n`);
+      }
+    });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("close", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolve(stdout);
+      else reject(Object.assign(new Error(stderr || `CLI exited with code ${code}.`), { stderr, stdout }));
+    });
+  });
 }
 
 test("the terminal CLI uses saved settings while command-line overrides remain temporary", async (context) => {
@@ -63,6 +107,56 @@ test("the terminal CLI uses saved settings while command-line overrides remain t
   assert.equal(config.providers.codex.home, savedFixture.codexHome);
 });
 
+test("active provider settings persist and invalid values fall back to Codex", async (context) => {
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-active-provider-"));
+  const configDirectory = path.join(xdgConfigHome, "session-steward");
+  const configPath = path.join(configDirectory, "config.json");
+  context.after(() => fs.rm(xdgConfigHome, { force: true, recursive: true }));
+  let settings = await createProviderSettings({ configDirectory });
+  assert.equal(settings.getActiveProviderId(), "codex");
+  await settings.setActiveProviderId("claude-code");
+  settings = await createProviderSettings({ configDirectory });
+  assert.equal(settings.getActiveProviderId(), "claude-code");
+
+  for (const activeProviderId of ["future-provider", 42, null]) {
+    await fs.writeFile(
+      configPath,
+      `${JSON.stringify({ activeProviderId, providers: {}, version: 1 })}\n`,
+    );
+    settings = await createProviderSettings({ configDirectory });
+    assert.equal(settings.getActiveProviderId(), "codex");
+  }
+});
+
+test("the terminal CLI honors the saved provider while an explicit provider wins", async (context) => {
+  const claudeFixture = await createClaudeHomeFixture();
+  const codexFixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-provider-"));
+  const settings = await createProviderSettings({
+    configDirectory: path.join(xdgConfigHome, "session-steward"),
+  });
+  context.after(async () => {
+    await Promise.all([
+      removeClaudeHomeFixture(claudeFixture),
+      removeCodexHomeFixture(codexFixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+  await settings.setProviderHome("claude-code", claudeFixture.claudeHome);
+  await settings.setActiveProviderId("claude-code");
+
+  const savedSessions = JSON.parse(await runCli(["--json"], xdgConfigHome));
+  assert.ok(savedSessions.every(({ providerId }) => providerId === "claude-code"));
+
+  const explicitSessions = JSON.parse(await runCli([
+    "--provider", "codex",
+    "--codex-home", codexFixture.codexHome,
+    "--json",
+    "--include-internals",
+  ], xdgConfigHome));
+  assert.ok(explicitSessions.every(({ providerId }) => providerId === "codex"));
+});
+
 test("help does not read provider settings", async (context) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-help-"));
   const unusableConfigHome = path.join(directory, "not-a-directory");
@@ -75,6 +169,221 @@ test("help does not read provider settings", async (context) => {
   assert.match(output, /--inactive-days <30\|60\|90>/u);
   assert.match(output, /--workspace <path>/u);
   assert.match(output, /--provider <codex\|claude-code>/u);
+  assert.match(output, /--include-supporting/u);
+  assert.match(output, /--cleanup <standard\|thorough>/u);
+  assert.match(output, /--overview/u);
+  assert.match(output, /--backups/u);
+});
+
+test("the terminal CLI reports overview and recovery backups as JSON", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-overview-"));
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+
+  const overview = JSON.parse(await runCli([
+    "--codex-home", fixture.codexHome,
+    "--overview",
+    "--json",
+  ], xdgConfigHome));
+  assert.equal(overview.sessionCount, 3);
+  assert.equal(overview.transcriptBytes > 0, true);
+  assert.equal(overview.transcriptFileCount, 3);
+
+  const codex = getProvider("codex");
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.standalone],
+  });
+  const plan = await codex.planSessionDeletion({
+    recordIds: [fixtureSessionIds.standalone],
+    store,
+  });
+  const cleanup = await codex.executeSessionDeletion({ plan, scope: "core", store });
+  const backups = JSON.parse(await runCli([
+    "--codex-home", fixture.codexHome,
+    "--backups",
+    "--json",
+  ], xdgConfigHome));
+
+  assert.equal(backups.length, 1);
+  assert.equal(backups[0].backupDirectory, cleanup.backupDirectory);
+  assert.equal(backups[0].restorable, true);
+  assert.equal(backups[0].scope, "core");
+});
+
+test("the interactive CLI defaults to standard cleanup and removes verified backups", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-standard-"));
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+
+  const output = await runInteractiveCli(
+    ["--codex-home", fixture.codexHome, "--include-internals"],
+    [
+      { prompt: "session-steward> ", response: `delete ${fixtureSessionIds.parent.slice(0, 12)}` },
+      { prompt: 'to confirm: ', response: "DELETE 2" },
+      { prompt: "session-steward> ", response: "quit" },
+    ],
+    xdgConfigHome,
+  );
+
+  assert.match(output, /Cleanup: Standard/u);
+  assert.match(output, /Deleted and verified 2 sessions/u);
+  assert.equal(
+    queryRows(path.join(fixture.codexHome, "memories_1.sqlite"), "select count(*) as count from stage1_outputs")[0].count,
+    2,
+  );
+  assert.equal(
+    queryRows(path.join(fixture.codexHome, "goals_1.sqlite"), "select count(*) as count from thread_goals")[0].count,
+    2,
+  );
+  const provider = getProvider("codex");
+  assert.deepEqual(await provider.listSessionDeletionBackups({ codexHome: fixture.codexHome }), []);
+});
+
+test("the interactive CLI runs thorough cleanup only when requested", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-thorough-"));
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+
+  const output = await runInteractiveCli(
+    ["--codex-home", fixture.codexHome, "--include-internals", "--cleanup", "thorough"],
+    [
+      { prompt: "session-steward> ", response: `delete ${fixtureSessionIds.parent}` },
+      { prompt: 'to confirm: ', response: "DELETE 2" },
+      { prompt: "session-steward> ", response: "quit" },
+    ],
+    xdgConfigHome,
+  );
+
+  assert.match(output, /Cleanup: Thorough/u);
+  assert.equal(
+    queryRows(path.join(fixture.codexHome, "memories_1.sqlite"), "select count(*) as count from stage1_outputs")[0].count,
+    0,
+  );
+  assert.equal(
+    queryRows(path.join(fixture.codexHome, "goals_1.sqlite"), "select count(*) as count from thread_goals")[0].count,
+    0,
+  );
+});
+
+test("the terminal CLI includes supporting sessions only when requested", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-supporting-"));
+  const database = new DatabaseSync(path.join(fixture.codexHome, "state_5.sqlite"));
+  database.prepare("update threads set title = ? where id = ?").run(
+    "The following is the Codex agent history whose request action you are assessing: review",
+    fixtureSessionIds.standalone,
+  );
+  database.close();
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+
+  const hidden = JSON.parse(await runCli([
+    "--codex-home", fixture.codexHome,
+    "--json",
+    "--include-internals",
+  ], xdgConfigHome));
+  const shown = JSON.parse(await runCli([
+    "--codex-home", fixture.codexHome,
+    "--json",
+    "--include-internals",
+    "--include-supporting",
+  ], xdgConfigHome));
+
+  assert.equal(hidden.some(({ id }) => id === fixtureSessionIds.standalone), false);
+  assert.equal(shown.some(({ id }) => id === fixtureSessionIds.standalone), true);
+});
+
+test("the interactive CLI restores a retained recovery backup", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-restore-"));
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+  const provider = getProvider("codex");
+  const store = await provider.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.standalone],
+  });
+  const plan = await provider.planSessionDeletion({
+    recordIds: [fixtureSessionIds.standalone],
+    store,
+  });
+  const cleanup = await provider.executeSessionDeletion({ plan, scope: "core", store });
+
+  const output = await runInteractiveCli(
+    ["--codex-home", fixture.codexHome],
+    [
+      { prompt: "session-steward> ", response: "restore 1" },
+      { prompt: 'to confirm: ', response: "RESTORE" },
+      { prompt: "Press Enter to continue...", response: "" },
+      { prompt: "session-steward> ", response: "quit" },
+    ],
+    xdgConfigHome,
+  );
+
+  assert.match(output, /Restored and verified/u);
+  await fs.access(fixture.transcripts.standalone);
+  await assert.rejects(fs.access(cleanup.backupDirectory), { code: "ENOENT" });
+  assert.deepEqual(await provider.listSessionDeletionBackups({ codexHome: fixture.codexHome }), []);
+});
+
+test("the interactive CLI permanently deletes a recovery backup only after confirmation", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-delete-backup-"));
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+  const provider = getProvider("codex");
+  const store = await provider.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.standalone],
+  });
+  const plan = await provider.planSessionDeletion({
+    recordIds: [fixtureSessionIds.standalone],
+    store,
+  });
+  const cleanup = await provider.executeSessionDeletion({ plan, scope: "core", store });
+
+  const output = await runInteractiveCli(
+    ["--codex-home", fixture.codexHome],
+    [
+      { prompt: "session-steward> ", response: "delete-backup 1" },
+      { prompt: 'to confirm: ', response: "DELETE BACKUP" },
+      { prompt: "Press Enter to continue...", response: "" },
+      { prompt: "session-steward> ", response: "quit" },
+    ],
+    xdgConfigHome,
+  );
+
+  assert.match(output, /Deleted recovery backup/u);
+  await assert.rejects(fs.access(cleanup.backupDirectory), { code: "ENOENT" });
+  await assert.rejects(fs.access(fixture.transcripts.standalone), { code: "ENOENT" });
 });
 
 test("the terminal CLI lists Claude Code sessions from a one-time home", async (context) => {

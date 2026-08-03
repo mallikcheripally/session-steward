@@ -76,6 +76,55 @@ test("the local server routes Claude Code sessions through the selected provider
   assert.equal((await fs.stat(fixture.unrelatedTranscript)).isFile(), true);
 });
 
+test("the active provider route is authorized and persists the selection", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const configDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-provider-route-"));
+  let server = await startLocalServer({
+    codexHome: fixture.codexHome,
+    configDirectory,
+    port: 0,
+  });
+  context.after(async () => {
+    await server.close().catch(() => {});
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(configDirectory, { force: true, recursive: true }),
+    ]);
+  });
+  let baseUrl = `http://127.0.0.1:${server.port}`;
+  let config = await fetch(`${baseUrl}/api/config`).then((response) => response.json());
+  assert.equal(config.activeProviderId, "codex");
+
+  const unauthorized = await fetch(`${baseUrl}/api/settings/active-provider`, {
+    body: JSON.stringify({ providerId: "claude-code" }),
+    headers: { "Content-Type": "application/json", Origin: baseUrl },
+    method: "PUT",
+  });
+  assert.equal(unauthorized.status, 400);
+
+  const saved = await fetch(`${baseUrl}/api/settings/active-provider`, {
+    body: JSON.stringify({ providerId: "claude-code" }),
+    headers: {
+      "Content-Type": "application/json",
+      Origin: baseUrl,
+      "X-Session-Steward-Token": config.mutationToken,
+    },
+    method: "PUT",
+  });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { activeProviderId: "claude-code" });
+  await server.close();
+
+  server = await startLocalServer({
+    codexHome: fixture.codexHome,
+    configDirectory,
+    port: 0,
+  });
+  baseUrl = `http://127.0.0.1:${server.port}`;
+  config = await fetch(`${baseUrl}/api/config`).then((response) => response.json());
+  assert.equal(config.activeProviderId, "claude-code");
+});
+
 async function waitForOperation(baseUrl, operation) {
   let current = operation;
 
@@ -169,6 +218,7 @@ test("the local server exposes the UI and synthetic Codex sessions", async (cont
   assert.equal(sessions.pageCount, 1);
   assert.equal(sessions.pageSize, 25);
   assert.ok(sessions.records.every(({ providerId }) => providerId === "codex"));
+  assert.ok(sessions.records.every(({ transcriptBytes }) => Number.isFinite(transcriptBytes)));
   const { overview } = await overviewResponse.json();
   assert.equal(overview.sessionCount, 3);
   assert.equal(overview.activeSessionCount, 2);

@@ -248,6 +248,47 @@ export async function createLargeCodexHomeFixture({ sessionCount = 12_000 } = {}
   };
 }
 
+export async function attachSizedTranscripts(
+  fixture,
+  { sessionCount = fixture.sessionCount, sizeForIndex = (index) => 64 + (index % 4096) } = {},
+) {
+  const transcriptsDirectory = path.join(fixture.codexHome, "sessions", "sized");
+  const transcriptPaths = new Map();
+  const batchSize = 64;
+  await fs.mkdir(transcriptsDirectory, { recursive: true });
+
+  for (let start = 0; start < sessionCount; start += batchSize) {
+    const writes = [];
+    const end = Math.min(sessionCount, start + batchSize);
+
+    for (let index = start; index < end; index += 1) {
+      const suffix = String(index).padStart(6, "0");
+      const id = `scale-${suffix}`;
+      const transcriptPath = path.join(transcriptsDirectory, `rollout-${suffix}.jsonl`);
+      transcriptPaths.set(id, transcriptPath);
+      writes.push(fs.writeFile(transcriptPath, Buffer.alloc(Math.max(0, sizeForIndex(index)))));
+    }
+
+    await Promise.all(writes);
+  }
+
+  const database = new DatabaseSync(path.join(fixture.codexHome, "state_5.sqlite"));
+
+  try {
+    database.exec("begin immediate");
+    const update = database.prepare("update threads set rollout_path = ? where id = ?");
+    for (const [id, transcriptPath] of transcriptPaths) update.run(transcriptPath, id);
+    database.exec("commit");
+  } catch (error) {
+    if (database.isTransaction) database.exec("rollback");
+    throw error;
+  } finally {
+    database.close();
+  }
+
+  return transcriptPaths;
+}
+
 export async function appendTranscriptOnlySessions(
   fixture,
   { sessionCount = 500 } = {},

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import path from "node:path";
-import { access, stat, truncate } from "node:fs/promises";
+import { access, rm, stat, truncate } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
@@ -8,6 +8,7 @@ import { getProvider } from "../../lib/providers/index.mjs";
 import { readJsonlEntries } from "../../lib/storage/jsonl.mjs";
 import {
   appendLargeJsonlFixture,
+  attachSizedTranscripts,
   appendTranscriptOnlySessions,
   createLargeCodexHomeFixture,
   createCodexHomeFixture,
@@ -46,6 +47,50 @@ test("Codex listing stays bounded for a large session collection", async (contex
   assert.ok(JSON.stringify(firstPage).length < 50_000);
 });
 
+test("Codex size sorting is global across every page", async (context) => {
+  const fixture = await createLargeCodexHomeFixture({ sessionCount: 60 });
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  await attachSizedTranscripts(fixture, {
+    sizeForIndex: (index) => index === 0 ? 10_000 : index === 59 ? 1 : 100 + index,
+  });
+
+  const firstPage = await codex.listSessions({
+    codexHome: fixture.codexHome,
+    includeInternals: true,
+    includeSupporting: true,
+    page: 1,
+    pageSize: 25,
+    sort: "size",
+  });
+  const lastPage = await codex.listSessions({
+    codexHome: fixture.codexHome,
+    includeInternals: true,
+    includeSupporting: true,
+    page: firstPage.pageCount,
+    pageSize: 25,
+    sort: "size",
+  });
+
+  assert.equal(firstPage.records[0].id, "scale-000000");
+  assert.equal(lastPage.records.at(-1).id, "scale-000059");
+});
+
+test("Codex size sorting places unknown transcript sizes last", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  await truncate(fixture.transcripts.parent, 4096);
+  await truncate(fixture.transcripts.child, 2048);
+  await rm(fixture.transcripts.standalone);
+  const result = await codex.listSessions({
+    codexHome: fixture.codexHome,
+    includeInternals: true,
+    includeSupporting: true,
+    sort: "size",
+  });
+  assert.equal(result.records.at(-1).id, fixtureSessionIds.standalone);
+  assert.equal(result.records.at(-1).transcriptBytes, null);
+});
+
 test("overview and server-side filters stay aligned with Codex metadata", async (context) => {
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
@@ -68,9 +113,14 @@ test("overview and server-side filters stay aligned with Codex metadata", async 
     database.close();
   }
 
-  const expectedTranscriptBytes = (await Promise.all(
-    Object.values(fixture.transcripts).map((transcriptPath) => stat(transcriptPath)),
-  )).reduce((totalBytes, stats) => totalBytes + stats.size, 0);
+  const transcriptSizes = Object.fromEntries(await Promise.all(
+    Object.entries(fixture.transcripts).map(async ([key, transcriptPath]) => [
+      key,
+      (await stat(transcriptPath)).size,
+    ]),
+  ));
+  const expectedTranscriptBytes = Object.values(transcriptSizes)
+    .reduce((totalBytes, bytes) => totalBytes + bytes, 0);
   const overview = await codex.getSessionOverview({ codexHome: fixture.codexHome });
 
   assert.equal(overview.sessionCount, 3);
@@ -85,6 +135,13 @@ test("overview and server-side filters stay aligned with Codex metadata", async 
   assert.deepEqual(
     new Map(overview.workspaces.map(({ path: workspacePath, sessionCount }) => [workspacePath, sessionCount])),
     new Map([[fixture.workspace, 2], [otherWorkspace, 1]]),
+  );
+  assert.deepEqual(
+    new Map(overview.workspaces.map(({ path: workspacePath, transcriptBytes }) => [workspacePath, transcriptBytes])),
+    new Map([
+      [fixture.workspace, transcriptSizes.parent + transcriptSizes.child],
+      [otherWorkspace, transcriptSizes.standalone],
+    ]),
   );
 
   const inactive = await codex.listSessions({

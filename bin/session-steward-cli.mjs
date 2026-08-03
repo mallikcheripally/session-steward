@@ -14,10 +14,16 @@ const { values } = parseArgs({
     "archive-status": {
       type: "string",
     },
+    backups: {
+      type: "boolean",
+    },
     "codex-home": {
       type: "string",
     },
     "claude-home": {
+      type: "string",
+    },
+    cleanup: {
       type: "string",
     },
     help: {
@@ -30,11 +36,17 @@ const { values } = parseArgs({
     "include-internals": {
       type: "boolean",
     },
+    "include-supporting": {
+      type: "boolean",
+    },
     json: {
       type: "boolean",
     },
     limit: {
       type: "string",
+    },
+    overview: {
+      type: "boolean",
     },
     provider: {
       type: "string",
@@ -58,26 +70,34 @@ const numericLimit =
 
 async function main() {
   const help = values.help ?? false;
-  const providerId = values.provider || "codex";
+  if (help) {
+    await runCli({ help: true });
+    return;
+  }
+  const { createProviderSettings } = await import("../lib/settings.mjs");
+  let settings = await createProviderSettings();
+  const providerId = values.provider || settings.getActiveProviderId();
   if (!["codex", "claude-code"].includes(providerId)) throw new Error("Provider must be codex or claude-code.");
   const homeOption = providerId === "codex" ? values["codex-home"] : values["claude-home"];
-  let providerHome = homeOption;
 
-  if (!help) {
-    const { createProviderSettings } = await import("../lib/settings.mjs");
-    const settings = await createProviderSettings({
-      providerHomeOverrides: providerHome === undefined ? {} : { [providerId]: providerHome },
+  if (homeOption !== undefined) {
+    settings = await createProviderSettings({
+      providerHomeOverrides: { [providerId]: homeOption },
     });
-    providerHome = settings.getHome(providerId);
   }
+  const providerHome = settings.getHome(providerId);
 
   await runCli({
     archiveStatus: values["archive-status"],
+    backups: values.backups ?? false,
+    cleanup: values.cleanup,
     help,
     inactiveDays: values["inactive-days"],
     includeInternals: values["include-internals"] ?? false,
+    includeSupporting: values["include-supporting"] ?? false,
     json: values.json ?? false,
     limit: numericLimit,
+    overview: values.overview ?? false,
     providerHome,
     providerId,
     search: values.search ?? "",
