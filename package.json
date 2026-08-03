@@ -59,6 +59,7 @@
     "benchmark:size": "node --expose-gc test/benchmarks/codex-size.mjs",
     "benchmark:transcripts": "node --expose-gc test/benchmarks/codex-transcripts.mjs",
     "prepack": "npm run build",
+    "pretest": "npm run build",
     "start": "node ./bin/session-steward.mjs",
     "serve": "node ./bin/session-steward.mjs",
     "check": "node ./bin/session-steward-cli.mjs --json --limit 5",
