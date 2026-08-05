@@ -42,7 +42,8 @@ function transcriptHeader({ cwd, id, parentThreadId = null }) {
   });
 }
 
-export async function createCodexHomeFixture({ includeUnknownDatabase = false } = {}) {
+export async function createCodexHomeFixture({ includeUnknownDatabase = false, layout = "state_5" } = {}) {
+  if (!["state_5", "state_6"].includes(layout)) throw new Error(`Unknown Codex fixture layout: ${layout}`);
   const codexHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-codex-"));
   const sessionsDirectory = path.join(codexHome, "sessions", "2026", "07", "01");
   const archivedSessionsDirectory = path.join(codexHome, "archived_sessions");
@@ -76,35 +77,41 @@ export async function createCodexHomeFixture({ includeUnknownDatabase = false } 
     ),
   ]);
 
-  const stateDatabasePath = path.join(codexHome, "state_5.sqlite");
+  const stateDatabasePath = path.join(codexHome, `${layout}.sqlite`);
+  const stateSchema = `
+    create table threads (
+      id text primary key,
+      rollout_path text,
+      cwd text,
+      title text,
+      first_user_message text,
+      agent_nickname text,
+      agent_role text,
+      archived integer default 0,
+      is_pinned integer default 0,
+      created_at integer,
+      updated_at integer,
+      created_at_ms integer,
+      updated_at_ms integer
+    );
+  `;
+  const stateRows = `
+    insert into threads values
+      (${sqlValue(fixtureSessionIds.parent)}, ${sqlValue(transcripts.parent)}, ${sqlValue(workspace)}, 'Build a safer cleanup flow', 'Build a safer cleanup flow', null, null, 0, 1, 1751364000, 1751367600, 1751364000000, 1751367600000),
+      (${sqlValue(fixtureSessionIds.child)}, ${sqlValue(transcripts.child)}, ${sqlValue(workspace)}, 'Inspect storage', 'Inspect storage', 'Scout', 'explorer', 0, 0, 1751364100, 1751367500, 1751364100000, 1751367500000),
+      (${sqlValue(fixtureSessionIds.standalone)}, ${sqlValue(transcripts.standalone)}, ${sqlValue(workspace)}, '', 'Review package metadata', null, null, 1, 0, 1751364200, 1751367400, 1751364200000, 1751367400000);
+  `;
   createDatabase(
     stateDatabasePath,
     `
       pragma foreign_keys = on;
-      create table threads (
-        id text primary key,
-        rollout_path text,
-        cwd text,
-        title text,
-        first_user_message text,
-        agent_nickname text,
-        agent_role text,
-        archived integer default 0,
-        is_pinned integer default 0,
-        created_at integer,
-        updated_at integer,
-        created_at_ms integer,
-        updated_at_ms integer
-      );
+      ${stateSchema}
       create table thread_spawn_edges (
         parent_thread_id text,
         child_thread_id text,
         status text
       );
-      insert into threads values
-        (${sqlValue(fixtureSessionIds.parent)}, ${sqlValue(transcripts.parent)}, ${sqlValue(workspace)}, 'Build a safer cleanup flow', 'Build a safer cleanup flow', null, null, 0, 1, 1751364000, 1751367600, 1751364000000, 1751367600000),
-        (${sqlValue(fixtureSessionIds.child)}, ${sqlValue(transcripts.child)}, ${sqlValue(workspace)}, 'Inspect storage', 'Inspect storage', 'Scout', 'explorer', 0, 0, 1751364100, 1751367500, 1751364100000, 1751367500000),
-        (${sqlValue(fixtureSessionIds.standalone)}, ${sqlValue(transcripts.standalone)}, ${sqlValue(workspace)}, '', 'Review package metadata', null, null, 1, 0, 1751364200, 1751367400, 1751364200000, 1751367400000);
+      ${stateRows}
       insert into thread_spawn_edges values
         (${sqlValue(fixtureSessionIds.parent)}, ${sqlValue(fixtureSessionIds.child)}, 'completed');
     `,
@@ -196,6 +203,8 @@ export async function createCodexHomeFixture({ includeUnknownDatabase = false } 
 
   return {
     codexHome,
+    layout,
+    stateDatabasePath,
     transcripts,
     workspace,
   };
@@ -207,7 +216,7 @@ export async function removeCodexHomeFixture(codexHome) {
 
 export async function createLargeCodexHomeFixture({ sessionCount = 12_000 } = {}) {
   const fixture = await createCodexHomeFixture();
-  const database = new DatabaseSync(path.join(fixture.codexHome, "state_5.sqlite"));
+  const database = new DatabaseSync(fixture.stateDatabasePath);
 
   try {
     database.exec("begin immediate");
@@ -272,7 +281,7 @@ export async function attachSizedTranscripts(
     await Promise.all(writes);
   }
 
-  const database = new DatabaseSync(path.join(fixture.codexHome, "state_5.sqlite"));
+  const database = new DatabaseSync(fixture.stateDatabasePath);
 
   try {
     database.exec("begin immediate");

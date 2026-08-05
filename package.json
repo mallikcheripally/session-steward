@@ -1,6 +1,6 @@
 {
   "name": "session-steward",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A local Codex and Claude Code session manager for safely reviewing and deleting old sessions.",
   "license": "MIT",
   "author": "Mallik Cheripally",
@@ -58,6 +58,7 @@
     "benchmark:scale": "node --expose-gc test/benchmarks/codex-list.mjs",
     "benchmark:size": "node --expose-gc test/benchmarks/codex-size.mjs",
     "benchmark:transcripts": "node --expose-gc test/benchmarks/codex-transcripts.mjs",
+    "benchmark:versioned-stores": "node --expose-gc test/benchmarks/codex-versioned-stores.mjs",
     "prepack": "npm run build",
     "pretest": "npm run build",
     "start": "node ./bin/session-steward.mjs",

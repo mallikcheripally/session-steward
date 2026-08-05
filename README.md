@@ -23,18 +23,6 @@ Session Steward makes session cleanup safer by finding those records, showing wh
 - Choose standard or thorough cleanup.
 - Use custom Codex or Claude home folders across browser and terminal sessions.
 
-## Built for large session libraries
-
-Current synthetic benchmarks on an arm64 Mac with Node.js 24.15.0:
-
-| Scenario | Scale | Time | Measured memory growth |
-| --- | ---: | ---: | ---: |
-| Paginated session listing | 50,003 sessions | 26 ms | 0.16 MB heap |
-| Session size index | 20,003 sessions | 85 ms cold, 9.7 ms warm | 30 MB peak RSS |
-| Transcript-only discovery | 5,003 sessions | 662 ms | 4.02 MB heap |
-
-Results vary with hardware, disk speed, and session layout. The benchmark commands are included in the repository and use temporary synthetic data.
-
 ## Safe by default
 
 - Cleanup happens entirely on your computer.
@@ -244,7 +232,19 @@ npm test
 npm run build
 ```
 
-Scale benchmarks are also available:
+## Performance and scale
+
+Session Steward uses paginated listings, incremental transcript reads, and bounded caches to remain responsive with large session libraries.
+
+Current synthetic benchmarks on an arm64 Mac with Node.js 24.15.0:
+
+| Scenario | Scale | Time | Measured memory growth |
+| --- | ---: | ---: | ---: |
+| Paginated session listing | 50,003 sessions | 26 ms | 0.16 MB heap |
+| Session size index | 20,003 sessions | 85 ms cold, 9.7 ms warm | 30 MB peak RSS |
+| Transcript-only discovery | 5,003 sessions | 662 ms | 4.02 MB heap |
+
+Run the scale benchmarks with:
 
 ```bash
 npm run benchmark:scale
@@ -254,7 +254,7 @@ npm run benchmark:discovery
 npm run benchmark:transcripts
 ```
 
-Tests and benchmarks use temporary synthetic session data. They do not read or modify your local sessions.
+Results vary with hardware, disk speed, and session layout. Tests and benchmarks use temporary synthetic data and do not read or modify your local sessions.
 
 ## Support
 

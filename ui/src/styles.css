@@ -286,6 +286,7 @@ button:disabled { cursor: not-allowed; }
 .status-pill:hover { filter: brightness(1.12); }
 .status-pill > span { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
 .status-ready { border-color: color-mix(in srgb, var(--success) 28%, transparent); color: var(--success); background: color-mix(in srgb, var(--success) 8%, transparent); }
+.status-partial { border-color: var(--border-subtle); color: var(--text-secondary); background: var(--surface); }
 .status-warning { border-color: color-mix(in srgb, var(--warning) 28%, transparent); color: var(--warning); background: color-mix(in srgb, var(--warning) 8%, transparent); }
 .status-error { border-color: var(--danger-border); color: var(--danger-text); background: color-mix(in srgb, var(--danger) 8%, transparent); }
 
@@ -474,6 +475,7 @@ button:disabled { cursor: not-allowed; }
 .compatibility-details { margin-top: 12px; color: var(--text-secondary); font-size: 12px; line-height: 20px; }
 .compatibility-details li { display: flex; gap: 8px; }
 .semantic-dot { width: 4px; height: 4px; flex: 0 0 auto; margin-top: 8px; border-radius: 999px; }
+.info-dot { background: var(--text-muted); }
 .warning-dot { background: var(--warning); }
 .success-icon { flex: 0 0 auto; margin-top: 2px; color: var(--success); }
 
