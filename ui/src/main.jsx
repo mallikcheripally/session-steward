@@ -521,7 +521,7 @@ function App() {
   const openDeleteDialog = async () => {
     try {
       setIsPlanning(true);
-      const nextScope = compatibility && compatibility.status !== "ready" ? "core" : scope;
+      const nextScope = compatibility?.status === "unsupported" ? "core" : scope;
       if (await makePlan(nextScope)) setDialog(true);
     } finally {
       setIsPlanning(false);
@@ -558,9 +558,14 @@ function App() {
         clearSelection();
         setInspected(null);
         setPlan(null);
+        const unrecognizedCount = Number(current.result.unrecognizedLocationCount) || 0;
+        const unrecognizedVerb = unrecognizedCount === 1 ? "was" : "were";
+        const unrecognized = unrecognizedCount > 0
+          ? ` ${unrecognizedCount.toLocaleString()} ${unrecognizedCount === 1 ? "location" : "locations"} in your Claude folder ${unrecognizedVerb} not recognized and ${unrecognizedVerb} not examined.`
+          : "";
         setNotice({
           kind: "success",
-          text: `Deleted ${sessionCount.toLocaleString()} ${sessionCount === 1 ? "session" : "sessions"} and ${transcriptCount.toLocaleString()} ${transcriptCount === 1 ? "file" : "files"} · ${fileSize(plannedTranscriptBytes)} freed · ${backupSummary}.`,
+          text: `Deleted ${sessionCount.toLocaleString()} ${sessionCount === 1 ? "session" : "sessions"} and ${transcriptCount.toLocaleString()} ${transcriptCount === 1 ? "file" : "files"} · ${fileSize(plannedTranscriptBytes)} freed · ${backupSummary}.${unrecognized}`,
         });
       } else if (current.status === "cancelled") {
         setDialog(false);
@@ -1148,7 +1153,7 @@ function Filters({ activeFilters, clearFilters, filters, overview, searchInputRe
       {searchFilter && <FilterControl filter={searchFilter} inputRef={searchInputRef} onChange={setFilter} options={filterOptions(searchFilter, overview)} value={values[searchFilter.id]}/>}
       <div className="filter-primary-controls">{demotableFilters.map((filter) => <FilterControl key={filter.id} className={`filter-priority-${filter.priority}`} filter={filter} onChange={setFilter} options={filterOptions(filter, overview)} value={values[filter.id]}/>)}</div>
       <div className="more-filters-wrap">
-        <button type="button" aria-expanded={showMoreFilters} onClick={() => setShowMoreFilters((current) => !current)} className={`more-filters-button ${activeOverflowCount > 0 ? "more-filters-active" : ""}`}><SlidersHorizontal size={15}/><span>More filters</span>{activeOverflowCount > 0 && <strong>{activeOverflowCount}</strong>}</button>
+        <button type="button" aria-label="More filters" aria-expanded={showMoreFilters} onClick={() => setShowMoreFilters((current) => !current)} className={`more-filters-button ${activeOverflowCount > 0 ? "more-filters-active" : ""}`}><SlidersHorizontal size={15}/><span>More filters</span>{activeOverflowCount > 0 && <strong>{activeOverflowCount}</strong>}</button>
       </div>
     </div>
     {showMoreFilters && <div className="more-filters-row">
@@ -1343,12 +1348,16 @@ function CompatibilityControl({ compatibility, compatibilityRef, expanded, onTog
   const providerName = compatibility.providerId === "claude-code" ? "Claude Code" : "Codex";
   const copy = compatibility.status === "ready"
     ? { title: "Cleanup supported", text: `Session Steward recognizes this ${providerName} data.`, tone: "status-ready" }
-    : compatibility.status === "newer-version"
-      ? { title: "Review needed", text: `New ${providerName} session data was found and needs review.`, tone: "status-warning" }
+    : compatibility.status === "partial"
+      ? { title: "Cleanup available", text: `Recognized ${providerName} session data can be cleaned. Unrecognized locations are left unchanged.`, tone: "status-partial" }
       : { title: "Update needed", text: `Thorough cleanup is paused because some ${providerName} session data is stored in a way Session Steward does not recognize yet.`, tone: "status-error" };
-  const details = [...compatibility.missing, ...compatibility.changed, ...compatibility.newlyDiscovered];
+  const details = [
+    ...compatibility.missing,
+    ...compatibility.changed,
+    ...(compatibility.providerId === "claude-code" ? compatibility.unrecognized : compatibility.newlyDiscovered),
+  ];
 
-  return <div ref={compatibilityRef} className="relative"><button onClick={onToggle} aria-expanded={expanded} className={`status-pill ${copy.tone}`}><span/>{copy.title}</button>{expanded && <section className="compatibility-popover"><div className="flex items-start justify-between gap-3"><div><p className="popover-title">Compatibility</p><p className="popover-copy">{copy.text}</p></div><button onClick={onClose} aria-label="Close compatibility details" className="icon-button"><X size={15}/></button></div><div className="version-list">{compatibility.providerId === "claude-code" ? <><VersionRow label="Claude Code CLI" support={compatibility.versionSupport?.claudeCli} value={compatibility.currentVersions.claudeCli}/><VersionRow label="Claude Desktop" support={compatibility.versionSupport?.claudeDesktop} value={compatibility.currentVersions.claudeDesktop}/></> : <><VersionRow label="ChatGPT" support={compatibility.versionSupport?.chatgptDesktop} value={compatibility.currentVersions.chatgptDesktop}/><VersionRow label="Codex" support={compatibility.versionSupport?.codexCli} value={compatibility.currentVersions.codexCli}/></>}</div><p className="compatibility-note">Cleanup depends on the session data Session Steward finds, not on the version you have installed. A newer version on its own does not affect cleanup.</p><ul className="compatibility-details">{details.length > 0 ? details.map((detail) => <li key={detail}><span className="semantic-dot warning-dot"/>{detail}</li>) : <li><Check size={13} className="success-icon"/>No unexpected session data was found.</li>}</ul></section>}</div>;
+  return <div ref={compatibilityRef} className="relative"><button onClick={onToggle} aria-expanded={expanded} className={`status-pill ${copy.tone}`}><span/>{copy.title}</button>{expanded && <section className="compatibility-popover"><div className="flex items-start justify-between gap-3"><div><p className="popover-title">Compatibility</p><p className="popover-copy">{copy.text}</p></div><button onClick={onClose} aria-label="Close compatibility details" className="icon-button"><X size={15}/></button></div><div className="version-list">{compatibility.providerId === "claude-code" ? <><VersionRow label="Claude Code CLI" support={compatibility.versionSupport?.claudeCli} value={compatibility.currentVersions.claudeCli}/><VersionRow label="Claude Desktop" support={compatibility.versionSupport?.claudeDesktop} value={compatibility.currentVersions.claudeDesktop}/></> : <><VersionRow label="ChatGPT" support={compatibility.versionSupport?.chatgptDesktop} value={compatibility.currentVersions.chatgptDesktop}/><VersionRow label="Codex" support={compatibility.versionSupport?.codexCli} value={compatibility.currentVersions.codexCli}/></>}</div><p className="compatibility-note">Cleanup depends on the session data Session Steward finds, not on the version you have installed. A newer version on its own does not affect cleanup.</p><ul className="compatibility-details">{details.length > 0 ? details.map((detail) => <li key={detail}><span className={`semantic-dot ${compatibility.status === "partial" ? "info-dot" : "warning-dot"}`}/>{detail}</li>) : <li><Check size={13} className="success-icon"/>No unexpected session data was found.</li>}</ul></section>}</div>;
 }
 
 function VersionRow({ label, support, value }) {

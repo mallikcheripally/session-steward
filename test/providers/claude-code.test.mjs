@@ -8,6 +8,57 @@ import { createClaudeHomeFixture, removeClaudeHomeFixture } from "../fixtures/cl
 
 const claude = getProvider("claude-code");
 
+for (const layout of ["current", "alternate"]) {
+  test(`Claude ${layout} layout supports listing, cleanup, and restore`, async (context) => {
+    const fixture = await createClaudeHomeFixture({ layout });
+    context.after(() => removeClaudeHomeFixture(fixture));
+    assert.equal((await claude.diagnoseStorageCompatibility(fixture)).status, "ready");
+    const listed = await claude.listSessions({ ...fixture, page: 1, pageSize: 25 });
+    assert.equal(listed.total, 3);
+    const store = await claude.loadDeletionStore({ ...fixture, recordIds: [fixture.cliId] });
+    const plan = await claude.planSessionDeletion({ recordIds: [fixture.cliId], store });
+    const result = await claude.executeSessionDeletion({ plan, scope: "core", store });
+    assert.equal((await claude.verifySessionDeletion({ plan, scope: "core", store })).complete, true);
+    const manifest = JSON.parse(await fs.readFile(path.join(result.backupDirectory, "manifest.json"), "utf8"));
+    assert.equal(manifest.version, 2);
+    assert.equal(manifest.profileId, "claude-local-store-2026-08");
+    await claude.restoreSessionDeletionBackup({
+      backupDirectory: result.backupDirectory,
+      claudeHome: fixture.claudeHome,
+      desktopDataHome: fixture.desktopDataHome,
+    });
+    assert.equal((await claude.getSessionRecord({ ...fixture, id: fixture.cliId })).id, fixture.cliId);
+  });
+}
+
+test("Claude reports unknown locations as partial and leaves them untouched during thorough cleanup", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  const unknownDirectory = path.join(fixture.claudeHome, "future-session-data");
+  await fs.mkdir(unknownDirectory);
+  await fs.writeFile(path.join(unknownDirectory, "record.json"), "{}\n");
+  claude.invalidateSessionCache(fixture);
+  const compatibility = await claude.diagnoseStorageCompatibility(fixture);
+  assert.equal(compatibility.status, "partial");
+  assert.deepEqual(compatibility.unrecognized, ["Unrecognized Claude data: future-session-data"]);
+  assert.equal((await claude.assertDeepCleanupSupported(fixture)).status, "partial");
+  const store = await claude.loadDeletionStore({ ...fixture, recordIds: [fixture.cliId] });
+  const plan = await claude.planSessionDeletion({ recordIds: [fixture.cliId], store });
+  assert.equal(plan.unrecognizedLocationCount, 1);
+  const result = await claude.executeSessionDeletion({ plan, scope: "deep", store });
+  assert.equal(result.unrecognizedLocationCount, 1);
+  assert.equal(await fs.readFile(path.join(unknownDirectory, "record.json"), "utf8"), "{}\n");
+});
+
+test("Claude reports a missing projects directory as unsupported", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  await fs.rm(path.join(fixture.claudeHome, "projects"), { force: true, recursive: true });
+  claude.invalidateSessionCache(fixture);
+  assert.equal((await claude.diagnoseStorageCompatibility(fixture)).status, "unsupported");
+  await assert.rejects(claude.assertDeepCleanupSupported(fixture), /project sessions folder could not be read/u);
+});
+
 test("the provider registry exposes Codex and Claude Code", () => {
   assert.deepEqual(listProviders().map(({ id }) => id), ["codex", "claude-code"]);
   assert.equal(claude.displayName, "Claude Code");
@@ -238,6 +289,42 @@ test("Claude thorough cleanup includes checkpoints while standard cleanup keeps 
   await claude.executeSessionDeletion({ plan, scope: "deep", store });
   await assert.rejects(fs.access(checkpoint), { code: "ENOENT" });
   assert.equal((await claude.verifySessionDeletion({ plan, scope: "deep", store })).complete, true);
+});
+
+test("Claude continues restoring version 1 recovery manifests", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  const store = await claude.loadDeletionStore({ ...fixture, recordIds: [fixture.cliId] });
+  const plan = await claude.planSessionDeletion({ recordIds: [fixture.cliId], store });
+  const result = await claude.executeSessionDeletion({ plan, scope: "core", store });
+  const manifestPath = path.join(result.backupDirectory, "manifest.json");
+  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  manifest.version = 1;
+  delete manifest.profileId;
+  delete manifest.compatibilityStatus;
+  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  assert.equal((await claude.listSessionDeletionBackups({ claudeHome: fixture.claudeHome }))[0].restorable, true);
+  await claude.restoreSessionDeletionBackup({
+    backupDirectory: result.backupDirectory,
+    claudeHome: fixture.claudeHome,
+    desktopDataHome: fixture.desktopDataHome,
+  });
+  assert.equal((await claude.getSessionRecord({ ...fixture, id: fixture.cliId })).id, fixture.cliId);
+});
+
+test("Claude notes when compatibility changed after a recovery backup", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  const store = await claude.loadDeletionStore({ ...fixture, recordIds: [fixture.cliId] });
+  const plan = await claude.planSessionDeletion({ recordIds: [fixture.cliId], store });
+  const result = await claude.executeSessionDeletion({ plan, scope: "core", store });
+  await fs.writeFile(path.join(fixture.claudeHome, "future-layout"), "{}\n");
+  const restored = await claude.restoreSessionDeletionBackup({
+    backupDirectory: result.backupDirectory,
+    claudeHome: fixture.claudeHome,
+    desktopDataHome: fixture.desktopDataHome,
+  });
+  assert.match(restored.note, /storage layout changed/u);
 });
 
 test("Claude discovery stays bounded for ten thousand sessions", async (context) => {

@@ -6,11 +6,12 @@ function line(value) {
   return `${JSON.stringify(value)}\n`;
 }
 
-export async function createClaudeHomeFixture({ extraSessions = 0 } = {}) {
+export async function createClaudeHomeFixture({ extraSessions = 0, layout = "current" } = {}) {
+  if (!["current", "alternate"].includes(layout)) throw new Error(`Unknown Claude fixture layout: ${layout}`);
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-claude-"));
   const claudeHome = path.join(root, ".claude");
   const desktopDataHome = path.join(root, "Claude");
-  const projectDirectory = path.join(claudeHome, "projects", "-workspace-demo");
+  const projectDirectory = path.join(claudeHome, "projects", layout === "alternate" ? "workspace-demo-v2" : "-workspace-demo");
   const desktopSessions = path.join(desktopDataHome, "claude-code-sessions");
   const cliId = "11111111-1111-4111-8111-111111111111";
   const desktopId = "22222222-2222-4222-8222-222222222222";
@@ -61,7 +62,7 @@ export async function createClaudeHomeFixture({ extraSessions = 0 } = {}) {
     await createTranscript(id, "cli", `Synthetic session ${index}`, `/workspace/project-${index % 25}`);
   }
 
-  return { claudeHome, cliId, cliTranscript, desktopDataHome, desktopId, desktopStatePath, desktopTranscript, root, unrelatedId, unrelatedTranscript };
+  return { claudeHome, cliId, cliTranscript, desktopDataHome, desktopId, desktopStatePath, desktopTranscript, layout, root, unrelatedId, unrelatedTranscript };
 }
 
 export async function removeClaudeHomeFixture(fixture) {

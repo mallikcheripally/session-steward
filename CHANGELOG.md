@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0] - 2026-08-04
+
+### Added
+
+- Support for versioned Codex state, log, memory, and goal databases, including old and new stores that coexist after a migration.
+- Permanent Codex and Claude layout fixtures, cross-store cleanup coverage, and a two-store scale benchmark.
+- Storage provenance in recovery manifests while retaining restore support for backups from 0.3.0.
+
+### Changed
+
+- Codex sessions from every recognized state store now share one deduplicated, globally sorted, paginated list.
+- Compatibility states now describe capability as ready, partial, or unsupported.
+- Codex continues with reduced metadata when optional fields or relationship tables are unavailable.
+- Claude thorough cleanup leaves unrecognized locations untouched, reports them clearly, and remains available when its required projects folder is readable.
+
 ## [0.3.0] - 2026-08-03
 
 ### Added
@@ -51,6 +66,7 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.4.0]: https://github.com/mallikcheripally/session-steward/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mallikcheripally/session-steward/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mallikcheripally/session-steward/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/mallikcheripally/session-steward/compare/v0.1.0...v0.1.1

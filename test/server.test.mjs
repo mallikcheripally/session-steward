@@ -339,7 +339,7 @@ test("the local server rejects non-loopback and incorrect Host headers", async (
   assert.equal(sessions.records.some(({ id }) => id === fixtureSessionIds.standalone), true);
 });
 
-test("deep cleanup is paused when unrecognized storage exists", async (context) => {
+test("deep cleanup remains available while unrelated storage is left alone", async (context) => {
   const fixture = await createCodexHomeFixture({ includeUnknownDatabase: true });
   const server = await startLocalServer({ codexHome: fixture.codexHome, port: 0 });
   context.after(async () => {
@@ -352,10 +352,7 @@ test("deep cleanup is paused when unrecognized storage exists", async (context) 
     headers: { "Content-Type": "application/json" },
     method: "POST",
   });
-  assert.equal(deepPlanResponse.status, 400);
-  assert.deepEqual(await deepPlanResponse.json(), {
-    error: "Deep cleanup is paused because unrecognized Codex storage was found.",
-  });
+  assert.equal(deepPlanResponse.status, 200);
   const corePlanResponse = await fetch(`${baseUrl}/api/deletion-plans`, {
     body: JSON.stringify({ ids: [fixtureSessionIds.parent], scope: "core" }),
     headers: { "Content-Type": "application/json" },
