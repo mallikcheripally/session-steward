@@ -20,6 +20,7 @@ Session Steward makes session cleanup safer by finding those records, showing wh
 - Find sessions inactive for 30, 60, or 90 days.
 - Filter active or archived sessions by workspace, name, or session ID.
 - Inspect session details and affected records before deletion.
+- Read a session timeline of what you asked, what changed, and which commands ran.
 - Choose standard or thorough cleanup.
 - Use custom Codex or Claude home folders across browser and terminal sessions.
 
@@ -149,6 +150,18 @@ session-steward-cli --workspace /path/to/project
 ```
 
 Use `--include-internals` to include subagents and `--include-supporting` to include supporting sessions. Session sizes are shown in the interactive list, and `--sort size` places the largest sessions first.
+
+Start with `--events` to read what happened inside a session — what you asked, what the assistant concluded, which files changed, and which commands ran or failed. In the interactive list, `inspect <number>` then shows that session's timeline:
+
+```bash
+session-steward-cli --events --events-limit 50
+```
+
+With `--json`, each session carries its own `events`, plus a `coverage` summary of how much of the transcript was recognized:
+
+```bash
+session-steward-cli --json --limit 5 --events
+```
 
 The interactive terminal accepts the same filters:
 

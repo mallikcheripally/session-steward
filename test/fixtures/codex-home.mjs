@@ -42,7 +42,150 @@ function transcriptHeader({ cwd, id, parentThreadId = null }) {
   });
 }
 
-export async function createCodexHomeFixture({ includeUnknownDatabase = false, layout = "state_5" } = {}) {
+function eventRecord(payload, sequence) {
+  return {
+    payload,
+    timestamp: new Date(Date.UTC(2026, 7, 1, 10, 0, sequence)).toISOString(),
+    type: payload.type === "compacted" || payload.type === "patch_apply_end"
+      ? "event_msg"
+      : "response_item",
+  };
+}
+
+function jsonLine(value) {
+  return `${JSON.stringify(value)}\n`;
+}
+
+export async function writeCodexEventTranscript(fixture) {
+  const records = [
+    {
+      payload: {
+        cli_version: "0.146.0",
+        cwd: fixture.workspace,
+        git: {
+          branch: "main",
+          commit_hash: "abc123",
+          repository_url: "https://github.com/mallikcheripally/session-steward",
+        },
+        id: fixtureSessionIds.parent,
+        originator: "codex-cli",
+        timestamp: "2026-08-01T10:00:00.000Z",
+      },
+      type: "session_meta",
+    },
+    {
+      payload: { cwd: fixture.workspace, model: "gpt-5", type: "turn_context" },
+      timestamp: "2026-08-01T10:00:01.000Z",
+      type: "turn_context",
+    },
+    eventRecord({
+      content: [{ text: "<environment_context>Generated context</environment_context>" }],
+      role: "user",
+      type: "message",
+    }, 2),
+    eventRecord({
+      content: [{ text: "Implement the event reader" }],
+      role: "user",
+      type: "message",
+    }, 3),
+    eventRecord({
+      content: [{ text: "I will implement it safely." }],
+      role: "assistant",
+      type: "message",
+    }, 4),
+    eventRecord({
+      call_id: "patch-success",
+      input: "*** Begin Patch\n*** Update File: lib/example.mjs\n-old\n+new\n*** End Patch",
+      name: "apply_patch",
+      type: "custom_tool_call",
+    }, 5),
+    eventRecord({
+      call_id: "patch-success",
+      stdout: "Success. Updated files.",
+      type: "patch_apply_end",
+    }, 6),
+    eventRecord({
+      call_id: "patch-failure",
+      input: "*** Begin Patch\n*** Add File: lib/failed.mjs\n+value\n*** End Patch",
+      name: "apply_patch",
+      type: "custom_tool_call",
+    }, 7),
+    eventRecord({
+      call_id: "patch-failure",
+      stdout: "Failed to apply patch.",
+      type: "patch_apply_end",
+    }, 8),
+    eventRecord({
+      call_id: "exec-failure",
+      input: "const r = await tools.exec_command({\"cmd\":\"sed -n '1,240p' /path && rg -n \\\"pattern\\\" file\",\"workdir\":\"/Users/admin/dev/x\",\"yield_time_ms\":10000}); text(r.output);\n",
+      name: "exec",
+      type: "custom_tool_call",
+    }, 9),
+    eventRecord({
+      call_id: "exec-failure",
+      output: [{ text: "Script failed\nA test failed", type: "input_text" }],
+      type: "custom_tool_call_output",
+    }, 10),
+    eventRecord({
+      arguments: JSON.stringify({ command: "npm run build", workdir: "/workspace/session-steward" }),
+      call_id: "future-command",
+      name: "mcp__future__shell",
+      type: "function_call",
+    }, 11),
+    eventRecord({
+      call_id: "future-command",
+      output: [{ text: "Script completed\nBuild passed", type: "input_text" }],
+      type: "function_call_output",
+    }, 12),
+    eventRecord({
+      arguments: JSON.stringify({ questions: [{ question: "Fix now or continue?" }] }),
+      call_id: "decision-1",
+      name: "request_user_input",
+      type: "function_call",
+    }, 13),
+    eventRecord({ call_id: "decision-1", output: "Fix now", type: "function_call_output" }, 14),
+    eventRecord({
+      arguments: JSON.stringify({ plan: [{ status: "completed", step: "Define the contract" }] }),
+      call_id: "plan-1",
+      name: "update_plan",
+      type: "function_call",
+    }, 15),
+    {
+      payload: { message: "Prior context was compacted." },
+      timestamp: "2026-08-01T10:00:16.000Z",
+      type: "compacted",
+    },
+    eventRecord({
+      arguments: JSON.stringify({ file_path: "/workspace/demo/generated.mjs" }),
+      call_id: "future-file",
+      name: "mcp__future__writer",
+      type: "function_call",
+    }, 17),
+    eventRecord({
+      arguments: "{}",
+      call_id: "future-unclassified",
+      name: "mcp__future__javascript",
+      type: "function_call",
+    }, 18),
+    eventRecord({ summary: [], type: "reasoning" }, 19),
+  ];
+  const oversized = eventRecord({
+    content: [{ text: "x".repeat(2_000) }],
+    role: "user",
+    type: "message",
+  }, 20);
+  await fs.writeFile(
+    fixture.transcripts.parent,
+    `${records.map(jsonLine).join("")}malformed line\n${jsonLine(oversized)}{"truncated":`,
+  );
+  return { maxLineBytes: 1_024, records };
+}
+
+export async function createCodexHomeFixture({
+  includeEventTranscript = false,
+  includeUnknownDatabase = false,
+  layout = "state_5",
+} = {}) {
   if (!["state_5", "state_6"].includes(layout)) throw new Error(`Unknown Codex fixture layout: ${layout}`);
   const codexHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-codex-"));
   const sessionsDirectory = path.join(codexHome, "sessions", "2026", "07", "01");
@@ -201,12 +344,20 @@ export async function createCodexHomeFixture({ includeUnknownDatabase = false, l
     );
   }
 
-  return {
+  const fixture = {
     codexHome,
     layout,
     stateDatabasePath,
     transcripts,
     workspace,
+  };
+  const eventFixture = includeEventTranscript
+    ? await writeCodexEventTranscript(fixture)
+    : null;
+
+  return {
+    ...fixture,
+    eventFixture,
   };
 }
 

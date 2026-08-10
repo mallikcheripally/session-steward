@@ -52,6 +52,49 @@ async function createDeletionPlan(baseUrl, ids, scope = "core", providerId = "co
   return body.plan;
 }
 
+test("the session events route is read-only, bounded, and accepts only session IDs", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  await fs.appendFile(fixture.transcripts.parent, `${JSON.stringify({
+    payload: {
+      content: [{ text: "Review the cleanup flow" }],
+      role: "user",
+      type: "message",
+    },
+    timestamp: "2026-08-01T10:00:00.000Z",
+    type: "response_item",
+  })}\n`);
+  const server = await startLocalServer({ codexHome: fixture.codexHome, port: 0 });
+  context.after(async () => {
+    await server.close().catch(() => {});
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const response = await fetch(
+    `${baseUrl}/api/session-events?provider=codex&id=${fixtureSessionIds.parent}&limit=1`,
+  );
+  const result = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(result.events.length, 1);
+  assert.equal(result.events[0].text, "Review the cleanup flow");
+  assert.equal(result.header.provider, "codex");
+  assert.equal(result.coverage.total, 2);
+
+  const pathResponse = await fetch(
+    `${baseUrl}/api/session-events?provider=codex&id=${encodeURIComponent("../state_5.sqlite")}`,
+  );
+  assert.equal(pathResponse.status, 400);
+  assert.deepEqual(await pathResponse.json(), { error: "Enter a valid session ID." });
+
+  const invalidLimitResponse = await fetch(
+    `${baseUrl}/api/session-events?provider=codex&id=${fixtureSessionIds.parent}&limit=1001`,
+  );
+  assert.equal(invalidLimitResponse.status, 400);
+  assert.deepEqual(await invalidLimitResponse.json(), {
+    error: "limit must be between 1 and 1000.",
+  });
+});
+
 test("the local server routes Claude Code sessions through the selected provider", async (context) => {
   const fixture = await createClaudeHomeFixture();
   const server = await startLocalServer({ claudeHome: fixture.claudeHome, port: 0 });

@@ -24,14 +24,22 @@ const repositoryRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "
 const cliPath = path.join(repositoryRoot, "bin", "session-steward-cli.mjs");
 
 async function runCli(args, xdgConfigHome) {
-  const { stdout } = await executeFile(process.execPath, [cliPath, ...args], {
-    cwd: repositoryRoot,
-    env: { ...process.env, XDG_CONFIG_HOME: xdgConfigHome },
-  });
+  const { stdout } = await runCliResult(args, xdgConfigHome);
   return stdout;
 }
 
+async function runCliResult(args, xdgConfigHome) {
+  return executeFile(process.execPath, [cliPath, ...args], {
+    cwd: repositoryRoot,
+    env: { ...process.env, XDG_CONFIG_HOME: xdgConfigHome },
+  });
+}
+
 async function runInteractiveCli(args, steps, xdgConfigHome) {
+  return (await runInteractiveCliResult(args, steps, xdgConfigHome)).stdout;
+}
+
+async function runInteractiveCliResult(args, steps, xdgConfigHome) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cliPath, ...args], {
       cwd: repositoryRoot,
@@ -67,7 +75,7 @@ async function runInteractiveCli(args, steps, xdgConfigHome) {
     });
     child.once("close", (code) => {
       clearTimeout(timeout);
-      if (code === 0) resolve(stdout);
+      if (code === 0) resolve({ stderr, stdout });
       else reject(Object.assign(new Error(stderr || `CLI exited with code ${code}.`), { stderr, stdout }));
     });
   });
@@ -173,6 +181,104 @@ test("help does not read provider settings", async (context) => {
   assert.match(output, /--cleanup <standard\|thorough>/u);
   assert.match(output, /--overview/u);
   assert.match(output, /--backups/u);
+  assert.match(output, /--events/u);
+  assert.match(output, /--events-limit <number>/u);
+});
+
+test("JSON event inspection preserves session fields and adds distilled output", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-events-json-"));
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+  await fs.appendFile(fixture.transcripts.parent, `${JSON.stringify({
+    payload: {
+      content: [{ text: "Review the cleanup flow" }],
+      role: "user",
+      type: "message",
+    },
+    timestamp: "2026-08-01T10:00:00.000Z",
+    type: "response_item",
+  })}\n`);
+
+  const plain = JSON.parse(await runCli([
+    "--codex-home", fixture.codexHome,
+    "--include-internals",
+    "--json",
+    "--limit", "1",
+  ], xdgConfigHome));
+  const result = await runCliResult([
+    "--codex-home", fixture.codexHome,
+    "--events",
+    "--events-limit", "1",
+    "--include-internals",
+    "--json",
+    "--limit", "1",
+  ], xdgConfigHome);
+  const enriched = JSON.parse(result.stdout);
+
+  for (const [key, value] of Object.entries(plain[0])) {
+    assert.deepEqual(enriched[0][key], value);
+  }
+  assert.deepEqual(enriched[0].events.map(({ text }) => text), ["Review the cleanup flow"]);
+  assert.equal(enriched[0].coverage.total, 2);
+  assert.equal(enriched[0].header.provider, "codex");
+  assert.equal(result.stderr, "");
+});
+
+test("text event inspection distinguishes transcript states and sends coverage to stderr", async (context) => {
+  const cases = [
+    {
+      expected: "No recognized session events were found.",
+      prepare: async () => {},
+    },
+    {
+      expected: "The transcript file is missing.",
+      prepare: async (fixture) => fs.rm(fixture.transcripts.parent),
+    },
+    {
+      expected: "No transcript path was recorded for this session.",
+      prepare: async (fixture) => {
+        const database = new DatabaseSync(fixture.stateDatabasePath);
+        try {
+          database.prepare("update threads set rollout_path = null where id = ?").run(fixtureSessionIds.parent);
+        } finally {
+          database.close();
+        }
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    await context.test(testCase.expected, async (subcontext) => {
+      const fixture = await createCodexHomeFixture();
+      const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-events-text-"));
+      subcontext.after(async () => {
+        await Promise.all([
+          removeCodexHomeFixture(fixture.codexHome),
+          fs.rm(xdgConfigHome, { force: true, recursive: true }),
+        ]);
+      });
+      await testCase.prepare(fixture);
+
+      const result = await runInteractiveCliResult(
+        ["--codex-home", fixture.codexHome, "--events", "--include-internals"],
+        [
+          { prompt: "session-steward> ", response: "inspect 1" },
+          { prompt: "Press Enter to continue...", response: "" },
+          { prompt: "session-steward> ", response: "quit" },
+        ],
+        xdgConfigHome,
+      );
+
+      assert.match(result.stdout, new RegExp(testCase.expected.replaceAll(".", "\\."), "u"));
+      assert.match(result.stderr, /^recognized \d+% · \d+ skipped/u);
+      assert.doesNotMatch(result.stdout, /recognized \d+% · \d+ skipped/u);
+    });
+  }
 });
 
 test("the terminal CLI reports overview and recovery backups as JSON", async (context) => {

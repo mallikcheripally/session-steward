@@ -68,3 +68,12 @@ jobs:
 
       - name: Benchmark transcript discovery
         run: npm run benchmark:transcripts
+
+      - name: Benchmark session sizes
+        run: npm run benchmark:size
+
+      - name: Benchmark versioned stores
+        run: npm run benchmark:versioned-stores
+
+      - name: Benchmark session events
+        run: npm run benchmark:events

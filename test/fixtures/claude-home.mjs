@@ -6,7 +6,183 @@ function line(value) {
   return `${JSON.stringify(value)}\n`;
 }
 
-export async function createClaudeHomeFixture({ extraSessions = 0, layout = "current" } = {}) {
+function claudeRecord(fixture, message, sequence, type) {
+  return {
+    entrypoint: "cli",
+    message,
+    sessionId: fixture.cliId,
+    timestamp: new Date(Date.UTC(2026, 7, 1, 10, 0, sequence)).toISOString(),
+    type,
+  };
+}
+
+export async function writeClaudeEventTranscript(fixture) {
+  const records = [
+    {
+      cwd: "/workspace/demo",
+      entrypoint: "cli",
+      gitBranch: "main",
+      sessionId: fixture.cliId,
+      timestamp: "2026-08-01T10:00:00.000Z",
+      type: "system",
+      version: "2.1.220",
+    },
+    claudeRecord(fixture, {
+      content: [{ text: "<environment_context>Generated context</environment_context>", type: "text" }],
+    }, 1, "user"),
+    claudeRecord(fixture, {
+      content: [{ text: "Implement the reader", type: "text" }],
+    }, 2, "user"),
+    claudeRecord(fixture, {
+      content: [{ text: "I will keep it bounded.", type: "text" }],
+      model: "claude-opus-4-1",
+    }, 3, "assistant"),
+    claudeRecord(fixture, {
+      content: [{
+        id: "edit-success",
+        input: { file_path: "/workspace/demo/app.mjs" },
+        name: "Edit",
+        type: "tool_use",
+      }],
+    }, 4, "assistant"),
+    claudeRecord(fixture, {
+      content: [{
+        content: "Updated file",
+        is_error: false,
+        tool_use_id: "edit-success",
+        type: "tool_result",
+      }],
+    }, 5, "user"),
+    claudeRecord(fixture, {
+      content: [{
+        id: "edit-failure",
+        input: { file_path: "/workspace/demo/failed.mjs" },
+        name: "Write",
+        type: "tool_use",
+      }],
+    }, 6, "assistant"),
+    claudeRecord(fixture, {
+      content: [{
+        content: "Permission denied",
+        is_error: true,
+        tool_use_id: "edit-failure",
+        type: "tool_result",
+      }],
+    }, 7, "user"),
+    claudeRecord(fixture, {
+      content: [{
+        id: "bash-success",
+        input: { command: "npm run build" },
+        name: "Bash",
+        type: "tool_use",
+      }],
+    }, 8, "assistant"),
+    claudeRecord(fixture, {
+      content: [{
+        content: "Build completed",
+        is_error: false,
+        tool_use_id: "bash-success",
+        type: "tool_result",
+      }],
+    }, 9, "user"),
+    claudeRecord(fixture, {
+      content: [{
+        id: "bash-failure",
+        input: { command: "npm test" },
+        name: "Bash",
+        type: "tool_use",
+      }],
+    }, 10, "assistant"),
+    claudeRecord(fixture, {
+      content: [{
+        content: "Exit code 2",
+        is_error: true,
+        tool_use_id: "bash-failure",
+        type: "tool_result",
+      }],
+    }, 11, "user"),
+    claudeRecord(fixture, {
+      content: [{
+        id: "future-file",
+        input: { file_path: "/workspace/demo/generated.mjs" },
+        name: "mcp__future__writer",
+        type: "tool_use",
+      }],
+    }, 12, "assistant"),
+    claudeRecord(fixture, {
+      content: [{
+        content: "Generated file",
+        is_error: false,
+        tool_use_id: "future-file",
+        type: "tool_result",
+      }],
+    }, 13, "user"),
+    claudeRecord(fixture, {
+      content: [{
+        id: "future-command",
+        input: { command: "git status" },
+        name: "mcp__future__shell",
+        type: "tool_use",
+      }],
+    }, 14, "assistant"),
+    claudeRecord(fixture, {
+      content: [{
+        content: "Command failed",
+        is_error: true,
+        tool_use_id: "future-command",
+        type: "tool_result",
+      }],
+    }, 15, "user"),
+    claudeRecord(fixture, {
+      content: [{
+        id: "question-1",
+        input: { questions: [{ question: "Fix now or continue?" }] },
+        name: "AskUserQuestion",
+        type: "tool_use",
+      }],
+    }, 16, "assistant"),
+    claudeRecord(fixture, {
+      content: [{ text: "Fix now", type: "text" }],
+    }, 17, "user"),
+    claudeRecord(fixture, {
+      content: [{
+        id: "plan-1",
+        input: { todos: [{ content: "Define the contract", status: "completed" }] },
+        name: "TodoWrite",
+        type: "tool_use",
+      }],
+    }, 18, "assistant"),
+    {
+      ...claudeRecord(fixture, { content: "Prior context was compacted." }, 19, "user"),
+      isCompactSummary: true,
+    },
+    claudeRecord(fixture, {
+      content: [{
+        id: "future-unclassified",
+        input: { script: "return document.title" },
+        name: "mcp__future__javascript",
+        type: "tool_use",
+      }],
+    }, 20, "assistant"),
+    claudeRecord(fixture, {
+      content: [{ text: "private reasoning", type: "thinking" }],
+    }, 21, "assistant"),
+  ];
+  const oversized = claudeRecord(fixture, {
+    content: [{ text: "x".repeat(2_000), type: "text" }],
+  }, 22, "user");
+  await fs.writeFile(
+    fixture.cliTranscript,
+    `${records.map(line).join("")}malformed line\n${line(oversized)}{"truncated":`,
+  );
+  return { maxLineBytes: 1_024, records };
+}
+
+export async function createClaudeHomeFixture({
+  extraSessions = 0,
+  includeEventTranscript = false,
+  layout = "current",
+} = {}) {
   if (!["current", "alternate"].includes(layout)) throw new Error(`Unknown Claude fixture layout: ${layout}`);
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-claude-"));
   const claudeHome = path.join(root, ".claude");
@@ -62,7 +238,12 @@ export async function createClaudeHomeFixture({ extraSessions = 0, layout = "cur
     await createTranscript(id, "cli", `Synthetic session ${index}`, `/workspace/project-${index % 25}`);
   }
 
-  return { claudeHome, cliId, cliTranscript, desktopDataHome, desktopId, desktopStatePath, desktopTranscript, layout, root, unrelatedId, unrelatedTranscript };
+  const fixture = { claudeHome, cliId, cliTranscript, desktopDataHome, desktopId, desktopStatePath, desktopTranscript, layout, root, unrelatedId, unrelatedTranscript };
+  const eventFixture = includeEventTranscript
+    ? await writeClaudeEventTranscript(fixture)
+    : null;
+
+  return { ...fixture, eventFixture };
 }
 
 export async function removeClaudeHomeFixture(fixture) {

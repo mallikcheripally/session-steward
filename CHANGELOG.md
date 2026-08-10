@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0] - 2026-08-10
+
+### Added
+
+- A session timeline. Opening a session now shows what actually happened inside it: what you asked, what the assistant concluded, which files it changed, and which commands it ran along with whether they succeeded. Deciding whether a large session is worth keeping no longer means guessing from a size and a date.
+- The same timeline in the terminal through `--events`, shown when you inspect a session, or attached to every record under `--json` for other tools to read.
+- Coverage on every timeline: how much of a transcript Session Steward recognized, and which kinds of records it did not. If a future Codex or Claude release changes its transcript format, an incomplete timeline will say so rather than quietly looking complete.
+
+### Changed
+
+- Timelines are read on demand and never stored, cached, or indexed. Nothing is written to your Codex or Claude folders, so reading a session cannot alter it.
+- Reading a transcript costs the same memory whether it is one megabyte or several hundred. Unusually large records are counted and passed over instead of loaded, and a session that is still being written is read up to a fixed point rather than chased as it grows.
+- Sessions with nothing to show now explain which case applies — the transcript file is gone, no transcript was ever recorded, or nothing in it was recognized — instead of appearing empty for no stated reason.
+- Sessions recorded twice by Codex under different internal envelopes are shown once, without dropping messages that appear in only one of them.
+
 ## [0.4.0] - 2026-08-04
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "session-steward",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A local Codex and Claude Code session manager for safely reviewing and deleting old sessions.",
   "license": "MIT",
   "author": "Mallik Cheripally",
@@ -36,7 +36,10 @@
     "ai-coding-agent",
     "chatgpt-app-cleanup"
   ],
-  "os": ["darwin", "linux"],
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "files": [
     "bin",
     "dist",
@@ -54,6 +57,7 @@
   "scripts": {
     "build": "vite build",
     "benchmark:discovery": "node --expose-gc test/benchmarks/codex-discovery.mjs",
+    "benchmark:events": "node --expose-gc test/benchmarks/session-events.mjs",
     "benchmark:overview": "node --expose-gc test/benchmarks/codex-overview.mjs",
     "benchmark:scale": "node --expose-gc test/benchmarks/codex-list.mjs",
     "benchmark:size": "node --expose-gc test/benchmarks/codex-size.mjs",

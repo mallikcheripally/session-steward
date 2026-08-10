@@ -24,11 +24,18 @@ import {
   X,
 } from "lucide-react";
 import { sessionDateGroupForSort } from "./date-groups.mjs";
+import {
+  newestSessionEvents,
+  SESSION_EVENT_BATCH_SIZE,
+  sessionEventCoveragePercent,
+  sessionEventText,
+} from "./session-event-view.mjs";
 import "./styles.css";
 
 const PAGE_SIZE = 25;
 const MAX_PAGE_LINKS = 5;
 const PLAN_REVIEW_REQUIRED = "DELETION_PLAN_REVIEW_REQUIRED";
+const SESSION_EVENT_COVERAGE_THRESHOLD = 90;
 const ALL_WORKSPACES = "__all_workspaces__";
 
 const FILTER_REGISTRY = [
@@ -242,6 +249,8 @@ function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const compatibilityRef = useRef(null);
+  const inspectController = useRef(null);
+  const inspectSequence = useRef(0);
   const loadSequence = useRef(0);
   const loadController = useRef(null);
   const planSequence = useRef(0);
@@ -269,6 +278,12 @@ function App() {
     setSelected(new Set());
     setSelectedRecords(new Map());
     setSelectionTrayExpanded(false);
+  };
+
+  const closeInspector = () => {
+    inspectSequence.current += 1;
+    inspectController.current?.abort();
+    setInspected(null);
   };
 
   const load = async ({ providerId = activeProviderId, queryOverrides = {} } = {}) => {
@@ -394,7 +409,7 @@ function App() {
 
   useEffect(() => {
     clearSelection();
-    setInspected(null);
+    closeInspector();
   }, [search, internals, supporting, inactiveDays, archiveStatus, workspace]);
 
   useEffect(() => {
@@ -463,11 +478,23 @@ function App() {
   const clearFilters = resetFilters;
 
   const inspect = async (id) => {
+    const sequence = ++inspectSequence.current;
+    inspectController.current?.abort();
+    const controller = new AbortController();
+    inspectController.current = controller;
+    const localRecord = records.find((record) => record.id === id);
+    if (localRecord) setInspected(localRecord);
+    else setInspected(null);
     try {
-      setInspected((await api(`/api/sessions/${encodeURIComponent(id)}?provider=${encodeURIComponent(activeProviderId)}`)).record);
+      const record = (await api(
+        `/api/sessions/${encodeURIComponent(id)}?provider=${encodeURIComponent(activeProviderId)}`,
+        { signal: controller.signal },
+      )).record;
+      if (sequence !== inspectSequence.current) return;
+      setInspected(record);
       setError("");
     } catch (issue) {
-      setError(issue.message);
+      if (issue.name !== "AbortError" && sequence === inspectSequence.current) setError(issue.message);
     }
   };
 
@@ -556,7 +583,7 @@ function App() {
         const transcriptCount = Number(result.deletedTranscriptCount) || 0;
         setDialog(false);
         clearSelection();
-        setInspected(null);
+        closeInspector();
         setPlan(null);
         const unrecognizedCount = Number(current.result.unrecognizedLocationCount) || 0;
         const unrecognizedVerb = unrecognizedCount === 1 ? "was" : "were";
@@ -618,7 +645,7 @@ function App() {
       if (current.status === "restored") {
         setDialog(false);
         clearSelection();
-        setInspected(null);
+        closeInspector();
         setPlan(null);
         setNotice({ kind: "success", text: "The recovery backup was restored." });
       } else {
@@ -657,7 +684,7 @@ function App() {
     setProviderHomeDraft(provider.home);
     setEditingProviderHome(false);
     clearSelection();
-    setInspected(null);
+    closeInspector();
     setPlan(null);
     setOperation(null);
     setDialog(false);
@@ -790,7 +817,7 @@ function App() {
     setProviderHomeDraft(provider.home);
     setEditingProviderHome(false);
     clearSelection();
-    setInspected(null);
+    closeInspector();
     setPlan(null);
     setOperation(null);
     setDialog(false);
@@ -807,6 +834,7 @@ function App() {
 
   keyboardStateRef.current = {
     clearSelection,
+    closeInspector,
     cursorIndex,
     dialog,
     inspect,
@@ -858,7 +886,7 @@ function App() {
 
       if (event.key === "Escape") {
         if (state.showCompatibilityDetails) setShowCompatibilityDetails(false);
-        else if (state.inspected) setInspected(null);
+        else if (state.inspected) state.closeInspector();
         else if (state.selected.size > 0) state.clearSelection();
         return;
       }
@@ -963,7 +991,7 @@ function App() {
         providerId={activeProviderId}
       />}
 
-      <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_340px]">
+      <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_420px] 2xl:grid-cols-[minmax(0,1fr)_480px]">
         <div className="surface overflow-hidden">
           <div className="session-list-header">
             <div>
@@ -1003,7 +1031,7 @@ function App() {
           <Pagination page={page} pages={pages} numbers={pageNumbers} setPage={setPage}/>
         </div>
 
-        <Inspector onClose={() => setInspected(null)} providerName={activeProviderName} record={inspected}/>
+        <Inspector key={`${activeProviderId}:${inspected?.id ?? "empty"}`} onClose={closeInspector} onOpenSession={inspect} providerId={activeProviderId} providerName={activeProviderName} record={inspected}/>
       </section>
     </div>
 
@@ -1326,13 +1354,179 @@ function EmptyState({ hasActiveFilters, onClear }) {
   return <div className="empty-state"><div><div className="empty-state-icon"><Search size={19}/></div><h3>{hasActiveFilters ? "No sessions match these filters" : "No sessions found"}</h3><p>{hasActiveFilters ? "Adjust the filters to see more sessions." : "Session Steward did not find any sessions in this folder."}</p>{hasActiveFilters && <button type="button" onClick={onClear} className="button secondary mt-4">Clear filters</button>}</div></div>;
 }
 
-function Inspector({ onClose, providerName, record }) {
+function Inspector({ onClose, onOpenSession, providerId, providerName, record }) {
+  const relatedIds = record ? [...new Set([
+    record.parentThreadId,
+    record.forkedFromId,
+    ...(record.childThreadIds ?? []),
+  ].filter((id) => id && id !== record.id))] : [];
+
   return <><button type="button" aria-label="Close session details" onClick={onClose} className={`inspector-backdrop ${record ? "inspector-backdrop-open" : ""}`}/><aside className={`surface inspector ${record ? "inspector-open" : ""}`}>
     <div className="inspector-header"><p className="panel-label">Session details</p>{record && <button type="button" onClick={onClose} aria-label="Close session details" className="icon-button lg:hidden"><X size={16}/></button>}</div>
     {record
-      ? <div className="inspector-content"><div className="flex items-start gap-3"><div className="icon-tile"><FileText size={17}/></div><div className="min-w-0"><h2 className="inspector-title">{record.displayName}</h2><p className="inspector-id">{record.id}</p></div></div><dl className="inspector-details"><Detail icon={Archive} label="Status" value={record.archived ? "Archived" : "Active"}/>{record.surface && <Detail icon={Bot} label="Used in" value={record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"}/>}<Detail icon={FolderKanban} label="Workspace" value={record.cwd || "Not recorded"}/><Detail icon={Clock3} label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail icon={FileText} label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail icon={GitBranch} label="Relationship" value={record.isSubagent ? "Subagent" : record.isFork ? "Fork" : `Primary ${providerName} session`}/>{record.providerId === "codex" && <Detail icon={Database} label="Linked subagents" value={String(record.childThreadIds.length)}/>}</dl></div>
+      ? <div><div className="inspector-content"><div className="flex items-start gap-3"><div className="icon-tile"><FileText size={17}/></div><div className="min-w-0"><h2 className="inspector-title">{record.displayName}</h2><p className="inspector-id">{record.id}</p></div></div><dl className="inspector-details"><Detail icon={Archive} label="Status" value={record.archived ? "Archived" : "Active"}/>{record.surface && <Detail icon={Bot} label="Used in" value={record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"}/>}<Detail icon={FolderKanban} label="Workspace" value={record.cwd || "Not recorded"}/><Detail icon={Clock3} label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail icon={FileText} label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail icon={GitBranch} label="Relationship" value={record.isSubagent ? "Subagent" : record.isFork ? "Fork" : `Primary ${providerName} session`}/></dl></div><SessionTimeline providerId={providerId} record={record}/><RelatedSessions ids={relatedIds} onOpenSession={onOpenSession} providerId={providerId}/></div>
       : <div className="inspector-empty"><div><div className="inspector-empty-icon"><Info size={18}/></div><h2>Select a session</h2><p>Its location, activity, and linked sessions will appear here.</p></div></div>}
   </aside></>;
+}
+
+function RelatedSessions({ ids, onOpenSession, providerId }) {
+  const [records, setRecords] = useState({});
+  const [visibleCount, setVisibleCount] = useState(20);
+  const visibleIds = ids.slice(0, visibleCount);
+  const visibleKey = visibleIds.join("\u0000");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let current = true;
+    Promise.all(visibleIds.map(async (id) => {
+      try {
+        const result = await api(`/api/sessions/${encodeURIComponent(id)}?provider=${encodeURIComponent(providerId)}`, {
+          signal: controller.signal,
+        });
+        return [id, result.record];
+      } catch (error) {
+        if (error.name === "AbortError") throw error;
+        return [id, null];
+      }
+    })).then((entries) => {
+      if (current) setRecords(Object.fromEntries(entries));
+    }).catch((error) => {
+      if (error.name !== "AbortError") setRecords({});
+    });
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  }, [providerId, visibleKey]);
+
+  if (ids.length === 0) return null;
+
+  return <section className="related-sessions"><div className="timeline-heading"><div><p className="panel-label">Related sessions</p><p>{ids.length.toLocaleString()} linked {ids.length === 1 ? "session" : "sessions"}</p></div></div><div className="related-session-list">{visibleIds.map((id) => {
+    const related = records[id];
+    return <button key={id} type="button" onClick={() => onOpenSession(id)}><GitBranch size={13}/><span className="related-session-copy"><strong>{related?.displayName || "Loading session details"}</strong>{related && <small>{Number.isFinite(related.transcriptBytes) ? fileSize(related.transcriptBytes) : "Size not recorded"} · {age(related.updatedAtMs)}</small>}<code>{id}</code></span><ChevronRight size={13}/></button>;
+  })}</div>{visibleCount < ids.length && <button type="button" onClick={() => setVisibleCount((current) => current + 20)} className="timeline-more">View more related sessions</button>}</section>;
+}
+
+function SessionTimeline({ providerId, record }) {
+  const [eventLimit, setEventLimit] = useState(SESSION_EVENT_BATCH_SIZE);
+  const [eventsError, setEventsError] = useState("");
+  const [isLoadingEvents, setIsLoadingEvents] = useState(true);
+  const [requestVersion, setRequestVersion] = useState(0);
+  const [result, setResult] = useState(null);
+  const [showInjected, setShowInjected] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let current = true;
+    setIsLoadingEvents(true);
+    setEventsError("");
+    const params = new URLSearchParams({
+      id: record.id,
+      limit: String(eventLimit),
+      provider: providerId,
+    });
+    api(`/api/session-events?${params}`, { signal: controller.signal })
+      .then((nextResult) => {
+        if (current) setResult(nextResult);
+      })
+      .catch((issue) => {
+        if (current && issue.name !== "AbortError") setEventsError(issue.message);
+      })
+      .finally(() => {
+        if (current) setIsLoadingEvents(false);
+      });
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  }, [eventLimit, providerId, record.id, requestVersion]);
+
+  const events = result ? newestSessionEvents(result.events) : [];
+  const injectedCount = events.filter((event) => event.kind === "ask" && event.injected).length;
+  const displayedEvents = showInjected
+    ? events
+    : events.filter((event) => event.kind !== "ask" || !event.injected);
+  const canShowMore = result
+    && result.events.length >= eventLimit
+    && eventLimit < 1_000;
+  const coveragePercent = result ? sessionEventCoveragePercent(result.coverage) : null;
+
+  return <section className="session-timeline" aria-busy={isLoadingEvents}><div className="timeline-heading"><div><p className="panel-label">Session timeline</p><p>{result && !result.reason ? `Newest ${result.events.length.toLocaleString()} events` : "What happened in this session"}</p></div></div><div className="timeline-region">
+    {!result && isLoadingEvents && <div className="timeline-initial-loading" role="status"><RefreshCw size={16} className="animate-spin"/><span>Reading session activity</span></div>}
+    {eventsError && <div className="timeline-empty"><AlertTriangle size={18}/><h3>Timeline unavailable</h3><p>{eventsError}</p><button type="button" onClick={() => setRequestVersion((current) => current + 1)} className="button secondary">Try again</button></div>}
+    {result?.reason && <><SessionTimelineEmpty reason={result.reason}/><CoverageSummary coverage={result.coverage}/></>}
+    {result && !result.reason && <>
+      {coveragePercent < SESSION_EVENT_COVERAGE_THRESHOLD && <div className="timeline-coverage-notice" role="status"><Info size={15}/><div><strong>Some session activity could not be shown</strong><p>{coveragePercent}% recognized · {result.coverage.unmapped.toLocaleString()} unmapped · {result.coverage.unparseable.toLocaleString()} unparseable · {result.coverage.oversized.toLocaleString()} oversized</p>{result.coverage.unmappedTypes.length > 0 && <p>Not understood: {result.coverage.unmappedTypes.map(({ count, type }) => `${type} (${count.toLocaleString()})`).join(", ")}</p>}</div></div>}
+      {injectedCount > 0 && <button type="button" aria-expanded={showInjected} onClick={() => setShowInjected((current) => !current)} className="injected-events-toggle">{showInjected ? "Hide" : "Show"} {injectedCount.toLocaleString()} injected context {injectedCount === 1 ? "event" : "events"}</button>}
+      <div className="timeline-events">{displayedEvents.map((event) => <SessionEvent event={event} key={`${event.sequence}:${event.kind}`}/>)}</div>
+      {displayedEvents.length === 0 && injectedCount > 0 && <p className="timeline-quiet-empty">Only injected context was found in this batch.</p>}
+      {canShowMore && <button type="button" aria-label={`Show ${SESSION_EVENT_BATCH_SIZE} more session events`} disabled={isLoadingEvents} onClick={() => setEventLimit((current) => Math.min(1_000, current + SESSION_EVENT_BATCH_SIZE))} className="timeline-more">{isLoadingEvents ? "Reading more activity…" : "Show more"}</button>}
+      {coveragePercent >= SESSION_EVENT_COVERAGE_THRESHOLD && <CoverageSummary coverage={result.coverage}/>}
+    </>}
+  </div></section>;
+}
+
+function CoverageSummary({ coverage }) {
+  const percent = sessionEventCoveragePercent(coverage);
+  return <div className="timeline-coverage"><p>{percent}% recognized · {coverage.skipped.toLocaleString()} deliberately skipped{coverage.unmapped > 0 ? ` · ${coverage.unmapped.toLocaleString()} unmapped` : ""}{coverage.unparseable > 0 ? ` · ${coverage.unparseable.toLocaleString()} unparseable` : ""}{coverage.oversized > 0 ? ` · ${coverage.oversized.toLocaleString()} oversized` : ""}</p>{coverage.unmappedTypes.length > 0 && <p>Not understood: {coverage.unmappedTypes.map(({ count, type }) => `${type} (${count.toLocaleString()})`).join(", ")}</p>}</div>;
+}
+
+function SessionTimelineEmpty({ reason }) {
+  const copy = {
+    "no-recognized-events": {
+      text: "The transcript exists, but Session Steward could not identify readable activity in it.",
+      title: "No recognized activity",
+    },
+    "no-transcript-path": {
+      text: "This session has no transcript location recorded.",
+      title: "No transcript was recorded",
+    },
+    "transcript-missing": {
+      text: "The transcript file is no longer available. The session metadata above is still intact.",
+      title: "Transcript file is missing",
+    },
+  }[reason];
+
+  return <div className="timeline-empty"><FileText size={18}/><h3>{copy.title}</h3><p>{copy.text}</p></div>;
+}
+
+function SessionEvent({ event }) {
+  const failed = event.failed === true || event.applied === false;
+  return <article className={`timeline-event timeline-event-${event.kind} ${failed ? "timeline-event-failed" : ""} ${event.injected ? "timeline-event-injected" : ""}`}><header><span>{event.kind}</span><time>{event.atMs ? new Date(event.atMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Time not recorded"}</time></header><SessionEventBody event={event}/></article>;
+}
+
+function SessionEventBody({ event }) {
+  if (["ask", "said", "summary"].includes(event.kind)) {
+    return <ExpandableEventText actionLabel={event.kind === "summary" ? "summary" : "message"} value={event.text}/>;
+  }
+  if (event.kind === "edit") {
+    const changeSummary = Number.isInteger(event.added) && Number.isInteger(event.removed)
+      ? `+${event.added}/-${event.removed}`
+      : "Changes not counted";
+    const outcome = event.applied === true ? "Applied" : event.applied === false ? "Not applied" : "Outcome not recorded";
+    return <><ScrollableEventText label="file paths" value={event.files.length > 0 ? event.files.join(" · ") : "File path not recorded"}/><p className="timeline-event-meta">{changeSummary} · {outcome}</p></>;
+  }
+  if (event.kind === "ran") {
+    return <><ScrollableEventText label="command" value={event.command || (event.unextracted ? "Command details could not be read" : "Command not recorded")}/>{event.failed === true && <ExpandableEventText actionLabel="output" value={event.error || "Command failed."}/>}<p className="timeline-event-meta">{event.failed === true ? "Failed" : event.failed === false ? "Completed" : "Outcome not recorded"}</p>{event.workdir && <div className="timeline-secondary-value"><span>Working folder</span><ScrollableEventText label="working folder" value={event.workdir}/></div>}</>;
+  }
+  if (event.kind === "decided") {
+    return <><ExpandableEventText actionLabel="question" value={event.question}/>{event.answer && <div className="timeline-secondary-value"><span>Answer</span><ExpandableEventText actionLabel="answer" value={event.answer}/></div>}</>;
+  }
+  const statuses = new Map();
+  for (const step of event.steps) statuses.set(step.status, (statuses.get(step.status) ?? 0) + 1);
+  return <p className="timeline-plan-summary">{[...statuses].map(([status, count]) => `${count} ${status.replaceAll("_", " ")}`).join(" · ") || "No steps recorded"}</p>;
+}
+
+function ExpandableEventText({ actionLabel, value }) {
+  const [expanded, setExpanded] = useState(false);
+  const display = sessionEventText(value, expanded);
+  return <div className="timeline-event-copy"><p>{display.text}</p>{display.expandable && <button type="button" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>{expanded ? "Show less" : `Show full ${actionLabel}`}</button>}{expanded && display.capped && <span>Showing the first 2,000 characters.</span>}</div>;
+}
+
+function ScrollableEventText({ label, value }) {
+  const [expanded, setExpanded] = useState(false);
+  const display = sessionEventText(value, expanded);
+  return <div className="timeline-scroll-copy"><div tabIndex={0}>{display.text}</div>{display.expandable && <button type="button" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>{expanded ? "Show less" : `Show full ${label}`}</button>}</div>;
 }
 
 function Detail({ icon: Icon, label, value }) {

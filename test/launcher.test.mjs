@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -25,6 +26,7 @@ test("the browser launcher shows help without starting the server", async () => 
 
 test("the browser launcher reports the installed version", async () => {
   const output = await runLauncher(["--version"]);
+  const manifest = JSON.parse(await fs.readFile(path.join(repositoryRoot, "package.json"), "utf8"));
 
-  assert.equal(output.trim(), "0.4.0");
+  assert.equal(output.trim(), manifest.version);
 });

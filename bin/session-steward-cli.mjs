@@ -26,6 +26,12 @@ const { values } = parseArgs({
     cleanup: {
       type: "string",
     },
+    events: {
+      type: "boolean",
+    },
+    "events-limit": {
+      type: "string",
+    },
     help: {
       short: "h",
       type: "boolean",
@@ -67,6 +73,9 @@ const numericLimit =
   values.limit && Number.isFinite(Number.parseInt(values.limit, 10))
     ? Number.parseInt(values.limit, 10)
     : null;
+const eventsLimit = values["events-limit"] === undefined
+  ? 100
+  : Number(values["events-limit"]);
 
 async function main() {
   const help = values.help ?? false;
@@ -86,11 +95,16 @@ async function main() {
     });
   }
   const providerHome = settings.getHome(providerId);
+  if (!Number.isSafeInteger(eventsLimit) || eventsLimit < 1 || eventsLimit > 1_000) {
+    throw new Error("Events limit must be between 1 and 1000.");
+  }
 
   await runCli({
     archiveStatus: values["archive-status"],
     backups: values.backups ?? false,
     cleanup: values.cleanup,
+    events: values.events ?? false,
+    eventsLimit,
     help,
     inactiveDays: values["inactive-days"],
     includeInternals: values["include-internals"] ?? false,
