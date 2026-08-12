@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.1] - 2026-08-12
+
+### Changed
+
+- Verified and recorded support for Codex CLI 0.147.0, ChatGPT 26.803.61601, Claude Code 2.1.228, and Claude Desktop 1.28929.0.
+- Codex timelines now recognize current compaction, rewind, interrupted-turn, lifecycle, and tool-discovery records.
+- Session attachments that cannot be assigned safely are disclosed and kept unchanged.
+
+### Fixed
+
+- Cleanup now stops when a selected Codex session has an active writer lock, including a second check immediately before session data changes.
+- Codex cleanup explicitly removes and verifies session-owned dynamic tool records.
+- Claude Desktop's shared scheduled-task file is no longer reported as an unrecognized session.
+
 ## [0.5.0] - 2026-08-10
 
 ### Added
@@ -81,6 +95,8 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.5.1]: https://github.com/mallikcheripally/session-steward/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/mallikcheripally/session-steward/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mallikcheripally/session-steward/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mallikcheripally/session-steward/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mallikcheripally/session-steward/compare/v0.1.1...v0.2.0

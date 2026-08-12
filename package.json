@@ -1,6 +1,6 @@
 {
   "name": "session-steward",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "A local Codex and Claude Code session manager for safely reviewing and deleting old sessions.",
   "license": "MIT",
   "author": "Mallik Cheripally",

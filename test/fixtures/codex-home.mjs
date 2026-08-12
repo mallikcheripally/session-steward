@@ -254,9 +254,20 @@ export async function createCodexHomeFixture({
         child_thread_id text,
         status text
       );
+      create table thread_dynamic_tools (
+        thread_id text,
+        position integer,
+        name text,
+        primary key (thread_id, position),
+        foreign key (thread_id) references threads(id) on delete cascade
+      );
       ${stateRows}
       insert into thread_spawn_edges values
         (${sqlValue(fixtureSessionIds.parent)}, ${sqlValue(fixtureSessionIds.child)}, 'completed');
+      insert into thread_dynamic_tools values
+        (${sqlValue(fixtureSessionIds.parent)}, 0, 'parent-tool'),
+        (${sqlValue(fixtureSessionIds.child)}, 0, 'child-tool'),
+        (${sqlValue(fixtureSessionIds.standalone)}, 0, 'standalone-tool');
     `,
   );
 

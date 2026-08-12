@@ -12,7 +12,10 @@ for (const layout of ["current", "alternate"]) {
   test(`Claude ${layout} layout supports listing, cleanup, and restore`, async (context) => {
     const fixture = await createClaudeHomeFixture({ layout });
     context.after(() => removeClaudeHomeFixture(fixture));
-    assert.equal((await claude.diagnoseStorageCompatibility(fixture)).status, "ready");
+    const compatibility = await claude.diagnoseStorageCompatibility(fixture);
+    assert.equal(compatibility.status, "ready");
+    assert.equal(compatibility.builtFor.claudeCli.includes("2.1.228"), true);
+    assert.equal(compatibility.builtFor.claudeDesktop.includes("1.28929.0"), true);
     const listed = await claude.listSessions({ ...fixture, page: 1, pageSize: 25 });
     assert.equal(listed.total, 3);
     const store = await claude.loadDeletionStore({ ...fixture, recordIds: [fixture.cliId] });
@@ -243,6 +246,7 @@ test("Claude standard cleanup removes exact artifacts and restores them without 
   const fixture = await createClaudeHomeFixture();
   context.after(() => removeClaudeHomeFixture(fixture));
   const worktreeRegistry = path.join(fixture.desktopDataHome, "git-worktrees.json");
+  const scheduledTasks = path.join(path.dirname(fixture.desktopStatePath), "scheduled-tasks.json");
   const worktreeBefore = await fs.readFile(worktreeRegistry, "utf8");
   const unrelatedBefore = await fs.readFile(fixture.unrelatedTranscript, "utf8");
   const store = await claude.loadDeletionStore({ ...fixture, recordIds: [fixture.desktopId] });
@@ -260,6 +264,10 @@ test("Claude standard cleanup removes exact artifacts and restores them without 
   assert.equal(backups[0].bytes > 0, true);
   assert.equal(backups[0].fileCount > 0, true);
   assert.equal(await fs.readFile(worktreeRegistry, "utf8"), worktreeBefore);
+  assert.deepEqual(JSON.parse(await fs.readFile(scheduledTasks, "utf8")), {
+    recordedSkips: {},
+    scheduledTasks: {},
+  });
   assert.equal(await fs.readFile(fixture.unrelatedTranscript, "utf8"), unrelatedBefore);
   await fs.appendFile(path.join(fixture.claudeHome, "history.jsonl"), `${JSON.stringify({ display: "created after cleanup", sessionId: fixture.unrelatedId, timestamp: 4 })}\n`);
   const restored = await claude.restoreSessionDeletionBackup({

@@ -220,6 +220,10 @@ export async function createClaudeHomeFixture({
     sessionId: desktopLocalId,
     title: "Desktop release dashboard",
   }));
+  await fs.writeFile(
+    path.join(path.dirname(desktopStatePath), "scheduled-tasks.json"),
+    JSON.stringify({ recordedSkips: {}, scheduledTasks: {} }),
+  );
   await fs.mkdir(path.join(projectDirectory, cliId, "subagents"), { recursive: true });
   await fs.writeFile(path.join(projectDirectory, cliId, "subagents", "agent-helper.jsonl"), line({ sessionId: cliId, type: "assistant" }));
   await fs.mkdir(path.join(claudeHome, "tasks", cliId), { recursive: true });

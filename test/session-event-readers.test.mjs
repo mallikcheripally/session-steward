@@ -487,6 +487,35 @@ test("provider readers preserve and mark only leading injected asks", async (con
   });
 });
 
+test("Codex classifies current lifecycle and tool-discovery records", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const records = [
+    { payload: { collaboration_mode_kind: "default", type: "task_started" }, type: "event_msg" },
+    { payload: { agent_thread_id: "child", kind: "updated", type: "sub_agent_activity" }, type: "event_msg" },
+    { payload: { type: "context_compacted" }, type: "event_msg" },
+    { payload: { num_turns: 1, type: "thread_rolled_back" }, type: "event_msg" },
+    { payload: { reason: "interrupted", type: "turn_aborted" }, type: "event_msg" },
+    { payload: { arguments: "{}", call_id: "search", type: "tool_search_call" }, type: "response_item" },
+    { payload: { call_id: "search", tools: [], type: "tool_search_output" }, type: "response_item" },
+  ];
+  await fs.appendFile(fixture.transcripts.parent, records.map(jsonLine).join(""));
+
+  const result = await codex.readSessionEvents({
+    codexHome: fixture.codexHome,
+    id: fixtureSessionIds.parent,
+  });
+
+  assert.deepEqual(result.events.map(({ text }) => text), [
+    "Earlier context was compacted.",
+    "Conversation rewound by 1 turn.",
+    "Turn stopped: interrupted.",
+  ]);
+  assert.equal(result.coverage.recognized, 3);
+  assert.equal(result.coverage.skipped, 5);
+  assert.equal(result.coverage.unmapped, 0);
+});
+
 test("provider coverage does not hide structurally unknown records as skipped", async (context) => {
   await context.test("Codex", async (subcontext) => {
     const fixture = await createCodexHomeFixture();

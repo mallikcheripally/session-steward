@@ -1543,7 +1543,7 @@ function CompatibilityControl({ compatibility, compatibilityRef, expanded, onTog
   const copy = compatibility.status === "ready"
     ? { title: "Cleanup supported", text: `Session Steward recognizes this ${providerName} data.`, tone: "status-ready" }
     : compatibility.status === "partial"
-      ? { title: "Cleanup available", text: `Recognized ${providerName} session data can be cleaned. Unrecognized locations are left unchanged.`, tone: "status-partial" }
+      ? { title: "Cleanup available", text: `Recognized ${providerName} session data can be cleaned. The details below are left unchanged.`, tone: "status-partial" }
       : { title: "Update needed", text: `Thorough cleanup is paused because some ${providerName} session data is stored in a way Session Steward does not recognize yet.`, tone: "status-error" };
   const details = [
     ...compatibility.missing,

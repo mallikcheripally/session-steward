@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, copyFile, readFile, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import test from "node:test";
@@ -21,6 +21,8 @@ for (const layout of ["state_5", "state_6"]) {
     context.after(() => removeCodexHomeFixture(fixture.codexHome));
     const compatibility = await codex.diagnoseStorageCompatibility({ codexHome: fixture.codexHome });
     assert.equal(compatibility.status, "ready");
+    assert.equal(compatibility.builtFor.codexCli.includes("0.147.0"), true);
+    assert.equal(compatibility.builtFor.chatgptDesktop.includes("26.803.61601"), true);
     assert.equal(compatibility.resolvedDatabases.state.primary.filename, `${layout}.sqlite`);
     const listed = await codex.listSessions({
       codexHome: fixture.codexHome,
@@ -424,6 +426,43 @@ test("Codex compatibility reports an unfamiliar database without claiming suppor
   assert.equal((await codex.assertDeepCleanupSupported({ codexHome: fixture.codexHome })).status, "partial");
 });
 
+test("Codex discloses retained session attachments", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const attachmentsDirectory = path.join(fixture.codexHome, "attachments", "attachment-id");
+  await mkdir(attachmentsDirectory, { recursive: true });
+  await writeFile(path.join(attachmentsDirectory, "note.txt"), "kept\n");
+
+  const compatibility = await codex.diagnoseStorageCompatibility({ codexHome: fixture.codexHome });
+  assert.equal(compatibility.status, "partial");
+  assert.equal(
+    compatibility.newlyDiscovered.includes(
+      "Session attachments are kept because their ownership cannot be verified safely.",
+    ),
+    true,
+  );
+  assert.equal((await codex.assertDeepCleanupSupported({ codexHome: fixture.codexHome })).status, "partial");
+});
+
+test("Codex cleanup stops while a selected session has a writer lock", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const locksDirectory = path.join(fixture.codexHome, "thread-writer-locks");
+  await mkdir(locksDirectory);
+  await writeFile(path.join(locksDirectory, `${fixtureSessionIds.parent}.lock`), "");
+  const store = await codex.loadSessionStore({ codexHome: fixture.codexHome });
+  const plan = await codex.planSessionDeletion({ recordIds: [fixtureSessionIds.parent], store });
+
+  await assert.rejects(
+    codex.preflightSessionDeletion({ plan, store }),
+    (error) => {
+      assert.match(error.message, /Close the selected Codex session/u);
+      assert.deepEqual(error.activeThreadIds, [fixtureSessionIds.parent]);
+      return true;
+    },
+  );
+});
+
 test("cleanup stops before creating a backup when disk capacity is insufficient", async (context) => {
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
@@ -488,10 +527,17 @@ test("deep cleanup backs up, removes, and verifies only the selected family", as
     recordIds: [fixtureSessionIds.parent],
     store,
   });
+  assert.equal(plan.dynamicToolRowCount, 2);
 
   const result = await codex.executeSessionDeletion({ plan, scope: "deep", store });
   const verification = await codex.verifySessionDeletion({ plan, scope: "deep", store });
   assert.equal(verification.complete, true);
+  assert.deepEqual(verification.remainingDynamicTools, []);
+  assert.deepEqual(
+    queryRows(store.stateDatabasePath, "select thread_id from thread_dynamic_tools order by thread_id")
+      .map(({ thread_id }) => ({ thread_id })),
+    [{ thread_id: fixtureSessionIds.standalone }],
+  );
   await access(result.backupDirectory);
   await access(path.join(result.backupDirectory, "history.jsonl"));
   await access(path.join(result.backupDirectory, "session_index.jsonl"));
