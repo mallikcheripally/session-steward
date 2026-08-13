@@ -1130,7 +1130,7 @@ function Overview({ error, loading, overview, providerId }) {
     },
   ];
 
-  return <section aria-label="Session overview" className="overview-strip">
+  return <section aria-label="Session overview" className="overview-strip" style={{ "--overview-columns": metrics.length }}>
     {metrics.map(({ icon: Icon, label, primary, value }) => <div key={label} className={`overview-item ${primary ? "overview-item-primary" : ""}`}>
       <Icon size={14}/>
       <div className="min-w-0">
