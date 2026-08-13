@@ -70,14 +70,12 @@
     "check": "node ./bin/session-steward-cli.mjs --json --limit 5",
     "test": "node --test test/*.test.mjs test/providers/*.test.mjs"
   },
-  "dependencies": {
-    "lucide-react": "^1.28.0",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
-  },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.0.5",
+    "lucide-react": "^1.28.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "tailwindcss": "^4.3.3",
     "vite": "^8.2.0"
   }
