@@ -205,6 +205,7 @@ button:disabled { cursor: not-allowed; }
 }
 
 .overview-strip {
+  --overview-columns: 5;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-bottom: 16px;
@@ -224,7 +225,7 @@ button:disabled { cursor: not-allowed; }
 
 .overview-item-primary { grid-column: 1 / -1; color: var(--text-secondary); }
 .overview-item:not(.overview-item-primary):nth-child(even) { border-right: 1px solid var(--border-subtle); }
-.overview-item:last-child { border-right: 0; }
+.overview-strip > .overview-item:last-child { border-right: 0; }
 .overview-label { overflow: hidden; font-size: 11px; font-weight: 600; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
 .overview-value { overflow: hidden; font-size: 16px; font-weight: 650; letter-spacing: -.015em; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .overview-item-primary .overview-value { font-size: 20px; line-height: 24px; color: var(--text-primary); }
@@ -708,7 +709,7 @@ button:disabled { cursor: not-allowed; }
   .overview-item,
   .overview-item-primary { grid-column: auto; border-right: 1px solid var(--border-subtle); border-bottom: 0; }
   .overview-item:nth-child(3n) { border-right: 0; }
-  .overview-item:last-child { border-right: 0; }
+  .overview-strip > .overview-item:last-child { border-right: 0; }
   .shortcut-groups { grid-template-columns: repeat(3, minmax(0,1fr)); }
 }
 
@@ -723,11 +724,11 @@ button:disabled { cursor: not-allowed; }
 
 @media (min-width: 1180px) {
   .session-filters { --filter-grid: minmax(220px, 1.5fr) repeat(2, minmax(180px, 1fr)) auto; }
-  .overview-strip { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .overview-strip { grid-template-columns: repeat(var(--overview-columns), minmax(0, 1fr)); }
   .overview-item,
   .overview-item-primary { border-right: 1px solid var(--border-subtle); border-bottom: 0; }
   .overview-item:nth-child(3n) { border-right: 1px solid var(--border-subtle); }
-  .overview-item:last-child { border-right: 0; }
+  .overview-strip > .overview-item:last-child { border-right: 0; }
   .filter-overflow-primary { display: none; }
 }
 
