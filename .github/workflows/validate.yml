@@ -66,6 +66,9 @@ jobs:
       - name: Benchmark metadata discovery
         run: npm run benchmark:discovery
 
+      - name: Benchmark Claude discovery
+        run: npm run benchmark:claude-discovery
+
       - name: Benchmark transcript discovery
         run: npm run benchmark:transcripts
 
