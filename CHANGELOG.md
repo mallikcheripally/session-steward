@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.2] - 2026-08-13
+
+### Changed
+
+- Reduced fresh installation size by avoiding redundant downloads of UI libraries already included in the bundled interface.
+
+### Fixed
+
+- Provider overview metrics now fill the available row evenly without leaving an unused column.
+
 ## [0.5.1] - 2026-08-12
 
 ### Changed
@@ -95,6 +105,7 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.5.2]: https://github.com/mallikcheripally/session-steward/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/mallikcheripally/session-steward/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/mallikcheripally/session-steward/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mallikcheripally/session-steward/compare/v0.3.0...v0.4.0
