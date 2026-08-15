@@ -19,6 +19,7 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
+          - windows-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -40,6 +41,14 @@ jobs:
 
       - name: Inspect package contents
         run: npm pack --dry-run
+
+      - name: Install Windows command shims
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          npm install --global .
+          session-steward.cmd --version
+          session-steward-cli.cmd --help
 
   benchmarks:
     name: Benchmarks

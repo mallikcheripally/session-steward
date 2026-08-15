@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import { spawn } from "node:child_process";
 
 import packageMetadata from "../package.json" with { type: "json" };
+import { getBrowserOpenInvocation } from "../lib/platform.mjs";
 import { assertSupportedNode } from "../lib/runtime.mjs";
 import { findAvailableUpdate, formatUpdateNotice } from "../lib/update-check.mjs";
 
@@ -58,14 +59,14 @@ process.stdout.write(`Session Steward is running at http://127.0.0.1:${server.po
 
 if (!values["no-open"]) {
   const url = `http://127.0.0.1:${server.port}`;
-  const openerCommand = process.platform === "darwin"
-    ? "open"
-    : process.platform === "linux"
-      ? "xdg-open"
-      : null;
+  const invocation = getBrowserOpenInvocation(url);
 
-  if (openerCommand) {
-    const opener = spawn(openerCommand, [url], { detached: true, stdio: "ignore" });
+  if (invocation) {
+    const opener = spawn(invocation.command, invocation.args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: invocation.windowsHide,
+    });
     opener.unref();
   } else {
     process.stdout.write(`Open ${url} in a browser.\n`);
