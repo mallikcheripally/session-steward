@@ -863,7 +863,9 @@ test("Codex folder settings persist while startup overrides remain run-only", as
   const resetConfig = JSON.parse(await fs.readFile(path.join(configDirectory, "config.json"), "utf8"));
   assert.equal(resetConfig.providers.codex, undefined);
   assert.deepEqual(await fs.readdir(configDirectory), ["config.json"]);
-  assert.equal((await fs.stat(path.join(configDirectory, "config.json"))).mode & 0o777, 0o600);
+  if (process.platform !== "win32") {
+    assert.equal((await fs.stat(path.join(configDirectory, "config.json"))).mode & 0o777, 0o600);
+  }
 });
 
 test("Codex folder settings reject invalid paths without changing the active folder", async (context) => {

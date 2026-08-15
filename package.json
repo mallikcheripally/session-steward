@@ -1,7 +1,7 @@
 {
   "name": "session-steward",
-  "version": "0.5.2",
-  "description": "A local Codex and Claude Code session manager for safely reviewing and deleting old sessions.",
+  "version": "0.6.0",
+  "description": "Codex and Claude Code session manager - browse, back up, and delete old sessions. Local browser UI + CLI.",
   "license": "MIT",
   "author": "Mallik Cheripally",
   "type": "module",
@@ -17,28 +17,25 @@
   "bugs": "https://github.com/mallikcheripally/session-steward/issues",
   "keywords": [
     "codex",
+    "codex-cli",
+    "codex-sessions",
+    "codex-cleanup",
+    "openai-codex",
+    "chatgpt-desktop",
     "claude-code",
     "claude-code-sessions",
+    "claude-code-cleanup",
     "claude-desktop",
-    "codex-cli",
-    "openai-codex",
-    "codex-sessions",
-    "codex-session-manager",
-    "codex-session-cleanup",
-    "codex-cleanup",
-    "codex-history",
-    "delete-codex-sessions",
-    "session-manager",
     "session-cleanup",
-    "ai-session-manager",
-    "chatgpt-desktop",
-    "chatgpt-history",
-    "ai-coding-agent",
-    "chatgpt-app-cleanup"
+    "session-history",
+    "session-manager",
+    "disk-space",
+    "disk-cleanup"
   ],
   "os": [
     "darwin",
-    "linux"
+    "linux",
+    "win32"
   ],
   "files": [
     "bin",
@@ -56,6 +53,7 @@
   },
   "scripts": {
     "build": "vite build",
+    "benchmark:claude-discovery": "node --expose-gc test/benchmarks/claude-discovery.mjs",
     "benchmark:discovery": "node --expose-gc test/benchmarks/codex-discovery.mjs",
     "benchmark:events": "node --expose-gc test/benchmarks/session-events.mjs",
     "benchmark:overview": "node --expose-gc test/benchmarks/codex-overview.mjs",
