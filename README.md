@@ -47,7 +47,7 @@ At startup, Session Steward may contact the public npm registry to check for a n
 
 ## Install and get started
 
-Session Steward supports macOS, Linux, and Windows and requires Node.js 24.15 or newer. Windows 11 is recommended; recent Windows 10 releases are supported on a best-effort basis. Git and a separate SQLite installation are not required.
+Session Steward supports macOS, Linux, and Windows and requires Node.js 24.15 or newer.
 
 Install it globally:
 
@@ -67,7 +67,7 @@ Or try it without installing:
 npx session-steward@latest
 ```
 
-Session Steward opens in your browser, listens only on `127.0.0.1`, and detects `~/.codex` and `~/.claude` by default. On Windows, these resolve to `%USERPROFILE%\.codex` and `%USERPROFILE%\.claude`. Claude Code CLI and local Claude Desktop sessions are detected on macOS and Windows; the Claude Code CLI is also supported on Linux.
+Session Steward opens in your browser, listens only on `127.0.0.1`, and detects `~/.codex` and `~/.claude` by default. Claude Code CLI and local Claude Desktop sessions are detected on macOS and Windows; the Claude Code CLI is also supported on Linux. On Windows, these resolve to `%USERPROFILE%\.codex` and `%USERPROFILE%\.claude`.
 
 When run inside WSL, Session Steward uses the Linux home folder and manages sessions stored there. Run it from Windows to manage sessions in your Windows profile.
 

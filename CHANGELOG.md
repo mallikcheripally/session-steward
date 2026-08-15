@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0] - 2026-08-16
+
+### Added
+
+- Windows support, alongside macOS and Linux. Codex and Claude Code sessions are read from your Windows user profile, and Claude Desktop data is found in both the standalone and Microsoft Store locations.
+- Inside WSL, Session Steward manages the sessions stored in your Linux home folder. Run it from Windows to manage the sessions in your Windows profile.
+
 ## [0.5.2] - 2026-08-13
 
 ### Changed
@@ -105,6 +112,7 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.6.0]: https://github.com/mallikcheripally/session-steward/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/mallikcheripally/session-steward/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/mallikcheripally/session-steward/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/mallikcheripally/session-steward/compare/v0.4.0...v0.5.0
