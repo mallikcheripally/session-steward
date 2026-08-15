@@ -47,7 +47,7 @@ At startup, Session Steward may contact the public npm registry to check for a n
 
 ## Install and get started
 
-Session Steward supports macOS and Linux and requires Node.js 24.15 or newer. Git and a separate SQLite installation are not required.
+Session Steward supports macOS, Linux, and Windows and requires Node.js 24.15 or newer. Windows 11 is recommended; recent Windows 10 releases are supported on a best-effort basis. Git and a separate SQLite installation are not required.
 
 Install it globally:
 
@@ -67,7 +67,9 @@ Or try it without installing:
 npx session-steward@latest
 ```
 
-Session Steward opens in your browser, listens only on `127.0.0.1`, and detects `~/.codex` and `~/.claude` by default. Claude Desktop sessions are detected on macOS; Claude Code CLI sessions work on macOS and Linux.
+Session Steward opens in your browser, listens only on `127.0.0.1`, and detects `~/.codex` and `~/.claude` by default. On Windows, these resolve to `%USERPROFILE%\.codex` and `%USERPROFILE%\.claude`. Claude Code CLI and local Claude Desktop sessions are detected on macOS and Windows; the Claude Code CLI is also supported on Linux.
+
+When run inside WSL, Session Steward uses the Linux home folder and manages sessions stored there. Run it from Windows to manage sessions in your Windows profile.
 
 To clean up sessions:
 
@@ -271,7 +273,7 @@ Results vary with hardware, disk speed, and session layout. Tests and benchmarks
 
 ## Support
 
-Codex, Claude Code CLI, and local Claude Code Desktop sessions are supported. Claude Desktop archive is not treated as deletion, and Session Steward never removes its worktrees.
+Codex, Claude Code CLI, and local Claude Code Desktop sessions are supported. Claude Desktop archive is not treated as deletion, and Session Steward never removes its worktrees. On Windows, both the standalone and Microsoft Store Claude Desktop data locations are detected.
 
 Use [GitHub Issues](https://github.com/mallikcheripally/session-steward/issues) to report a bug, request a provider, or share a storage format that Session Steward does not recognize.
 
