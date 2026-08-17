@@ -79,6 +79,7 @@ test("the session events route is read-only, bounded, and accepts only session I
   assert.equal(result.events[0].text, "Review the cleanup flow");
   assert.equal(result.header.provider, "codex");
   assert.equal(result.coverage.total, 2);
+  assert.deepEqual(result.summary, { asks: 1, commands: 0, edits: 0 });
 
   const pathResponse = await fetch(
     `${baseUrl}/api/session-events?provider=codex&id=${encodeURIComponent("../state_5.sqlite")}`,

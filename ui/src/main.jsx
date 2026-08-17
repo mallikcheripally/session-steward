@@ -1407,6 +1407,12 @@ function RelatedSessions({ ids, onOpenSession, providerId }) {
   })}</div>{visibleCount < ids.length && <button type="button" onClick={() => setVisibleCount((current) => current + 20)} className="timeline-more">View more related sessions</button>}</section>;
 }
 
+function sessionActivitySummaryText({ asks, commands, edits }) {
+  if (asks === 0 && commands === 0 && edits === 0) return "No recorded activity";
+  const countLabel = (count, label) => `${count.toLocaleString()} ${label}${count === 1 ? "" : "s"}`;
+  return [countLabel(asks, "ask"), countLabel(edits, "edit"), countLabel(commands, "command")].join(" · ");
+}
+
 function SessionTimeline({ providerId, record }) {
   const [eventLimit, setEventLimit] = useState(SESSION_EVENT_BATCH_SIZE);
   const [eventsError, setEventsError] = useState("");
@@ -1450,14 +1456,17 @@ function SessionTimeline({ providerId, record }) {
     && result.events.length >= eventLimit
     && eventLimit < 1_000;
   const coveragePercent = result ? sessionEventCoveragePercent(result.coverage) : null;
+  const showSummary = result && !result.reason && result.window.complete;
+  const allEventsShown = result && result.events.length < eventLimit;
 
-  return <section className="session-timeline" aria-busy={isLoadingEvents}><div className="timeline-heading"><div><p className="panel-label">Session timeline</p><p>{result && !result.reason ? `Newest ${result.events.length.toLocaleString()} events` : "What happened in this session"}</p></div></div><div className="timeline-region">
+  return <section className="session-timeline" aria-busy={isLoadingEvents}><div className="timeline-heading"><div><p className="panel-label">Session timeline</p><p>{showSummary ? sessionActivitySummaryText(result.summary) : "What happened in this session"}</p></div></div><div className="timeline-region">
     {!result && isLoadingEvents && <div className="timeline-initial-loading" role="status"><RefreshCw size={16} className="animate-spin"/><span>Reading session activity</span></div>}
     {eventsError && <div className="timeline-empty"><AlertTriangle size={18}/><h3>Timeline unavailable</h3><p>{eventsError}</p><button type="button" onClick={() => setRequestVersion((current) => current + 1)} className="button secondary">Try again</button></div>}
     {result?.reason && <><SessionTimelineEmpty reason={result.reason}/><CoverageSummary coverage={result.coverage}/></>}
     {result && !result.reason && <>
       {coveragePercent < SESSION_EVENT_COVERAGE_THRESHOLD && <div className="timeline-coverage-notice" role="status"><Info size={15}/><div><strong>Some session activity could not be shown</strong><p>{coveragePercent}% recognized · {result.coverage.unmapped.toLocaleString()} unmapped · {result.coverage.unparseable.toLocaleString()} unparseable · {result.coverage.oversized.toLocaleString()} oversized</p>{result.coverage.unmappedTypes.length > 0 && <p>Not understood: {result.coverage.unmappedTypes.map(({ count, type }) => `${type} (${count.toLocaleString()})`).join(", ")}</p>}</div></div>}
       {injectedCount > 0 && <button type="button" aria-expanded={showInjected} onClick={() => setShowInjected((current) => !current)} className="injected-events-toggle">{showInjected ? "Hide" : "Show"} {injectedCount.toLocaleString()} injected context {injectedCount === 1 ? "event" : "events"}</button>}
+      <p className="timeline-window-note">{allEventsShown ? `All ${result.events.length.toLocaleString()} events` : `Newest ${result.events.length.toLocaleString()} events`}</p>
       <div className="timeline-events">{displayedEvents.map((event) => <SessionEvent event={event} key={`${event.sequence}:${event.kind}`}/>)}</div>
       {displayedEvents.length === 0 && injectedCount > 0 && <p className="timeline-quiet-empty">Only injected context was found in this batch.</p>}
       {canShowMore && <button type="button" aria-label={`Show ${SESSION_EVENT_BATCH_SIZE} more session events`} disabled={isLoadingEvents} onClick={() => setEventLimit((current) => Math.min(1_000, current + SESSION_EVENT_BATCH_SIZE))} className="timeline-more">{isLoadingEvents ? "Reading more activity…" : "Show more"}</button>}

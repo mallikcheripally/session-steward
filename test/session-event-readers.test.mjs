@@ -123,6 +123,11 @@ test("Codex translates a transcript into the shared event vocabulary", async (co
     unmappedTypes: [],
     unparseable: 2,
   });
+  assert.deepEqual(result.summary, {
+    asks: 1,
+    commands: 3,
+    edits: 3,
+  });
   assertCoverageInvariant(result.coverage);
   assert.deepEqual(result.header, {
     cwd: fixture.workspace,
@@ -154,6 +159,7 @@ test("Codex translates a transcript into the shared event vocabulary", async (co
   assert.equal(recent.events[0].text, "Prior context was compacted.");
   assert.equal(recent.events[2].command, "mcp__future__javascript");
   assert.deepEqual(recent.coverage, result.coverage);
+  assert.deepEqual(recent.summary, result.summary);
 
   const preview = await codex.readSessionEvents({
     codexHome: fixture.codexHome,
@@ -359,6 +365,11 @@ test("Claude Code translates events, outcomes, decisions, and unknown tools", as
     unmappedTypes: [],
     unparseable: 2,
   });
+  assert.deepEqual(result.summary, {
+    asks: 1,
+    commands: 4,
+    edits: 3,
+  });
   assertCoverageInvariant(result.coverage);
   assert.deepEqual(result.header, {
     cwd: "/workspace/demo",
@@ -440,6 +451,7 @@ test("provider readers preserve and mark only leading injected asks", async (con
       "Implement the reader.",
       "<future_context>This is a literal example.</future_context>",
     ]);
+    assert.equal(result.summary.asks, 2);
   });
 
   await context.test("Claude Code", async (subcontext) => {
@@ -484,6 +496,95 @@ test("provider readers preserve and mark only leading injected asks", async (con
     });
 
     assert.deepEqual(result.events.map(({ injected }) => injected), [true, false, false]);
+    assert.equal(result.summary.asks, 2);
+  });
+});
+
+test("full-session summaries are independent of the retained event window", async (context) => {
+  await context.test("Codex", async (subcontext) => {
+    const fixture = await createCodexHomeFixture();
+    subcontext.after(() => removeCodexHomeFixture(fixture.codexHome));
+    const records = [
+      {
+        payload: { cwd: fixture.workspace, id: fixtureSessionIds.parent },
+        type: "session_meta",
+      },
+      ...Array.from({ length: 3 }, (unused, index) => codexRecord({
+        call_id: `old-edit-${index}`,
+        changes: { [`/workspace/old-${index}.mjs`]: { type: "update" } },
+        success: index !== 1,
+        type: "patch_apply_end",
+      }, index + 1)),
+      ...Array.from({ length: 20 }, (unused, index) => codexRecord({
+        message: `Recent message ${index}`,
+        type: "agent_message",
+      }, index + 4)),
+    ];
+    await fs.writeFile(fixture.transcripts.parent, records.map(jsonLine).join(""));
+
+    const recent = await codex.readSessionEvents({
+      codexHome: fixture.codexHome,
+      id: fixtureSessionIds.parent,
+      limit: 10,
+    });
+    const full = await codex.readSessionEvents({
+      codexHome: fixture.codexHome,
+      id: fixtureSessionIds.parent,
+      limit: 1_000,
+    });
+
+    assert.deepEqual(recent.summary, { asks: 0, commands: 0, edits: 3 });
+    assert.equal(recent.events.some(({ kind }) => kind === "edit"), false);
+    assert.equal(full.events.some(({ kind }) => kind === "edit"), true);
+    assert.notEqual(recent.events.length, full.events.length);
+    assert.equal(JSON.stringify(recent.summary), JSON.stringify(full.summary));
+  });
+
+  await context.test("Claude Code", async (subcontext) => {
+    const fixture = await createClaudeHomeFixture();
+    subcontext.after(() => removeClaudeHomeFixture(fixture));
+    const timestamp = (sequence) => new Date(Date.UTC(2026, 7, 1, 10, 0, sequence)).toISOString();
+    const records = [
+      {
+        cwd: "/workspace/demo",
+        entrypoint: "cli",
+        sessionId: fixture.cliId,
+        timestamp: timestamp(0),
+        type: "system",
+      },
+      ...Array.from({ length: 3 }, (unused, index) => ({
+        entrypoint: "cli",
+        message: {
+          content: [{
+            id: `old-edit-${index}`,
+            input: { file_path: `/workspace/old-${index}.mjs` },
+            name: "Edit",
+            type: "tool_use",
+          }],
+        },
+        sessionId: fixture.cliId,
+        timestamp: timestamp(index + 1),
+        type: "assistant",
+      })),
+      ...Array.from({ length: 20 }, (unused, index) => ({
+        entrypoint: "cli",
+        message: { content: [{ text: `Recent message ${index}`, type: "text" }] },
+        sessionId: fixture.cliId,
+        timestamp: timestamp(index + 4),
+        type: "assistant",
+      })),
+    ];
+    await fs.writeFile(fixture.cliTranscript, records.map(jsonLine).join(""));
+    claude.invalidateSessionCache(fixture);
+
+    const recent = await claude.readSessionEvents({ ...fixture, id: fixture.cliId, limit: 10 });
+    const full = await claude.readSessionEvents({ ...fixture, id: fixture.cliId, limit: 1_000 });
+
+    assert.deepEqual(recent.summary, { asks: 0, commands: 0, edits: 3 });
+    assert.equal(recent.events.some(({ kind }) => kind === "edit"), false);
+    assert.equal(full.events.some(({ kind }) => kind === "edit"), true);
+    assert.notEqual(recent.events.length, full.events.length);
+    assert.equal(JSON.stringify(recent.summary), JSON.stringify(full.summary));
   });
 });
 
@@ -749,6 +850,7 @@ test("Codex collapses duplicated message envelopes without dropping unique text"
   const texts = result.events.map(({ text }) => text);
 
   assert.equal(result.coverage.duplicates, 2);
+  assert.equal(result.summary.asks, 2);
   assert.equal(texts.filter((text) => text === "I will start with the entry points.").length, 1);
   assert.equal(texts.includes("Only the event envelope carries this one."), true);
   assert.equal(texts.filter((text) => text === "Map the project structure").length, 2);

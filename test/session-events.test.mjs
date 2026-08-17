@@ -9,6 +9,7 @@ import {
   createSessionEvent,
   createSessionEventCoverage,
   createSessionEventHeader,
+  createSessionEventSummary,
   createSessionEventsResult,
   SESSION_EVENT_KIND,
   SESSION_EVENT_COVERAGE_THRESHOLD,
@@ -223,6 +224,23 @@ test("reports recognized coverage apart from deliberate exclusions", () => {
   }), 90);
 });
 
+test("normalizes full-session activity counts", () => {
+  assert.deepEqual(createSessionEventSummary(), {
+    asks: 0,
+    commands: 0,
+    edits: 0,
+  });
+  assert.deepEqual(createSessionEventSummary({ asks: 14, commands: 23, edits: 47 }), {
+    asks: 14,
+    commands: 23,
+    edits: 47,
+  });
+  assert.throws(
+    () => createSessionEventSummary({ edits: -1 }),
+    /summary\.edits must be a non-negative integer/u,
+  );
+});
+
 test("marks a preview complete when the transcript ends before its limit", () => {
   const state = createSessionEventReadState({
     limit: 2,
@@ -291,11 +309,13 @@ test("builds a provider-agnostic extraction result", () => {
     sequence: 0,
     text: "Proceed",
   })];
+  const summary = createSessionEventSummary({ asks: 1, commands: 2, edits: 3 });
 
   assert.deepEqual(createSessionEventsResult({
     coverage,
     events,
     header,
+    summary,
     window: {
       complete: false,
       end: SESSION_EVENT_WINDOW_END.OLDEST,
@@ -306,6 +326,7 @@ test("builds a provider-agnostic extraction result", () => {
     events,
     header,
     reason: null,
+    summary,
     window: {
       complete: false,
       end: "oldest",
