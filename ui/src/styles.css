@@ -478,10 +478,12 @@ button:disabled { cursor: not-allowed; }
 .timeline-event-failed { border-color: var(--danger-border); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
 .timeline-event-failed header span,
 .timeline-event-failed .timeline-event-meta { color: var(--danger-text); }
-.timeline-event-injected { background: color-mix(in srgb, var(--text-primary) 2.5%, transparent); }
 .timeline-event-copy p { overflow-wrap: anywhere; color: var(--text-secondary); font-size: 12px; line-height: 19px; white-space: pre-wrap; }
-.timeline-event-ask,
+.timeline-event-ask { justify-self: end; width: fit-content; max-width: 85%; margin: 12px 20px; border: 1px solid var(--border-strong); border-radius: var(--radius-control); padding: 14px 16px; background: var(--raised); }
+.timeline-event-ask header span { border-color: color-mix(in srgb, var(--accent) 34%, transparent); color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .timeline-event-said { padding-top: 18px; padding-bottom: 18px; }
+.timeline-event-ask.timeline-event-injected { border-color: var(--border-subtle); background: color-mix(in srgb, var(--text-primary) 4%, var(--surface)); }
+.timeline-event-ask.timeline-event-injected header span { border-color: var(--border-subtle); color: var(--text-secondary); background: var(--raised); }
 .timeline-event-ask .timeline-event-copy p,
 .timeline-event-said .timeline-event-copy p { color: var(--text-primary); font-size: 13px; font-weight: 500; line-height: 21px; }
 .timeline-event-copy button,
