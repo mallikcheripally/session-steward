@@ -959,7 +959,7 @@ function App() {
         <div className="flex items-center gap-3.5">
           <div className="brand-mark"><ShieldCheck size={23}/></div>
           <div>
-            <p className="brand-kicker">Local AI coding session manager</p>
+            <p className="brand-kicker">Local AI Session Manager</p>
             <h1 className="brand-title">Session Steward</h1>
           </div>
         </div>
