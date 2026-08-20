@@ -524,6 +524,34 @@ button:disabled { cursor: not-allowed; }
 .timeline-empty p { max-width: 320px; margin-top: 6px; color: var(--text-muted); font-size: 11px; line-height: 17px; }
 .timeline-empty .button { margin-top: 14px; }
 .timeline-quiet-empty { padding: 16px 20px; color: var(--text-muted); font-size: 11px; text-align: center; }
+
+.composition {
+  --segment-toolOutput: #3987e5;
+  --segment-largeRecords: #d95926;
+  --segment-compaction: #199e70;
+  --segment-attachments: #c98500;
+  --segment-messages: #d55181;
+  --segment-edits: #008300;
+  --segment-reasoning: #9085e9;
+  --segment-other: #737373;
+  border-top: 1px solid var(--border-subtle);
+  padding: 16px 20px;
+}
+
+.composition-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.composition-heading > p:last-child { color: var(--text-secondary); font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.composition-bar { display: flex; height: 10px; gap: 2px; }
+.composition-segment { min-width: 3px; border-radius: 2px; transition: opacity 150ms ease-out; }
+.composition-segment:first-child { border-radius: 4px 2px 2px 4px; }
+.composition-segment:last-child { border-radius: 2px 4px 4px 2px; }
+.composition-segment-muted { opacity: .26; }
+.composition-legend { display: grid; gap: 1px; margin-top: 12px; }
+.composition-legend-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 -6px; border-radius: 6px; padding: 3px 6px; transition: background 150ms ease-out, opacity 150ms ease-out; }
+.composition-legend-row:hover { background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+.composition-legend-row dt { display: flex; min-width: 0; align-items: center; gap: 8px; overflow: hidden; color: var(--text-secondary); font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.composition-legend-row dd { display: flex; flex: 0 0 auto; align-items: baseline; gap: 8px; color: var(--text-primary); font-size: 12px; font-weight: 600; line-height: 18px; font-variant-numeric: tabular-nums; }
+.composition-legend-row dd span { min-width: 30px; color: var(--text-muted); font-weight: 500; text-align: right; }
+.composition-swatch { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 2px; }
 .timeline-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 16px 20px; }
 .timeline-stat { min-width: 0; }
 .timeline-stat .overview-value { margin-top: 2px; color: var(--text-primary); }

@@ -170,6 +170,12 @@ const selectionRecord = ({ cwd, displayName, transcriptBytes, updatedAtMs }) => 
   updatedAtMs,
 });
 
+const percentLabel = (share) => {
+  const percent = share * 100;
+  if (percent > 0 && percent < 1) return "<1%";
+  return `${Math.round(percent)}%`;
+};
+
 const fileSize = (bytes) => {
   if (!Number.isFinite(bytes) || bytes < 0) return "Unknown";
   if (bytes < 1024) return `${bytes} bytes`;
@@ -1448,6 +1454,56 @@ function RelatedSessions({ ids, onOpenSession, providerId }) {
   })}</div>{visibleCount < ids.length && <button type="button" onClick={() => setVisibleCount((current) => current + 20)} className="timeline-more">View more related sessions</button>}</section>;
 }
 
+// Fixed slot order: colour follows the segment, never its rank, and this order
+// is what the palette was validated against for colour-blind separation.
+const COMPOSITION_SEGMENTS = [
+  { key: "toolOutput", label: "Tool output" },
+  { key: "largeRecords", label: "Large records" },
+  { key: "compaction", label: "Compaction history" },
+  { key: "attachments", label: "Attachments" },
+  { key: "messages", label: "Messages" },
+  { key: "edits", label: "File edits" },
+  { key: "reasoning", label: "Reasoning" },
+  { key: "other", label: "Other" },
+];
+
+function TranscriptComposition({ composition }) {
+  const [active, setActive] = useState(null);
+  if (!composition || composition.total === 0) return null;
+
+  const present = COMPOSITION_SEGMENTS
+    .map((segment) => ({
+      ...segment,
+      bytes: composition[segment.key],
+      share: composition[segment.key] / composition.total,
+    }))
+    .filter(({ bytes }) => bytes > 0);
+  if (present.length === 0) return null;
+
+  const ranked = [...present].sort((left, right) => right.bytes - left.bytes);
+  const describe = ({ bytes, label, share }) => `${label} — ${fileSize(bytes)} (${percentLabel(share)})`;
+
+  return <section className="composition">
+    <div className="composition-heading"><p className="panel-label">Where the space goes</p><p>{fileSize(composition.total)}</p></div>
+    <div aria-hidden="true" className="composition-bar" onMouseLeave={() => setActive(null)}>{present.map((segment) => <span
+      className={`composition-segment ${active && active !== segment.key ? "composition-segment-muted" : ""}`}
+      key={segment.key}
+      onMouseEnter={() => setActive(segment.key)}
+      style={{ background: `var(--segment-${segment.key})`, flexGrow: segment.bytes }}
+      title={describe(segment)}
+    />)}</div>
+    <dl className="composition-legend">{ranked.map((segment) => <div
+      className={`composition-legend-row ${active && active !== segment.key ? "composition-segment-muted" : ""}`}
+      key={segment.key}
+      onMouseEnter={() => setActive(segment.key)}
+      onMouseLeave={() => setActive(null)}
+    >
+      <dt><span aria-hidden="true" className="composition-swatch" style={{ background: `var(--segment-${segment.key})` }}/>{segment.label}</dt>
+      <dd>{fileSize(segment.bytes)}<span>{percentLabel(segment.share)}</span></dd>
+    </div>)}</dl>
+  </section>;
+}
+
 function SessionTimeline({ providerId, record }) {
   const [eventLimit, setEventLimit] = useState(SESSION_EVENT_BATCH_SIZE);
   const [eventsError, setEventsError] = useState("");
@@ -1513,6 +1569,7 @@ function SessionTimeline({ providerId, record }) {
       ["Edits", result.summary.edits],
       ["Commands", result.summary.commands],
     ].map(([label, count]) => <div className="timeline-stat" key={label}><dt className="overview-label">{label}</dt><dd className="overview-value">{count.toLocaleString()}</dd></div>)}</dl>
+    : null}{showSummary ? <TranscriptComposition composition={result.composition}/>
     : <div className="timeline-heading"><div><p className="panel-label">Session activity</p><p>What happened in this session</p></div></div>}<div className="timeline-region">
     {!result && isLoadingEvents && <div className="timeline-initial-loading" role="status"><RefreshCw size={16} className="animate-spin"/><span>Reading session activity</span></div>}
     {eventsError && <div className="timeline-empty"><AlertTriangle size={18}/><h3>Timeline unavailable</h3><p>{eventsError}</p><button type="button" onClick={() => setRequestVersion((current) => current + 1)} className="button secondary">Try again</button></div>}

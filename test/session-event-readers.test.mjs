@@ -37,6 +37,15 @@ function assertCoverageInvariant(coverage) {
   );
 }
 
+function assertCompositionInvariant(composition) {
+  assert.equal(
+    Object.entries(composition)
+      .filter(([key]) => key !== "total")
+      .reduce((sum, [, bytes]) => sum + bytes, 0),
+    composition.total,
+  );
+}
+
 function codexRecord(payload, sequence) {
   return {
     payload,
@@ -128,6 +137,7 @@ test("Codex translates a transcript into the shared event vocabulary", async (co
     commands: 3,
     edits: 3,
   });
+  assertCompositionInvariant(result.composition);
   assertCoverageInvariant(result.coverage);
   assert.deepEqual(result.header, {
     cwd: fixture.workspace,
@@ -370,6 +380,7 @@ test("Claude Code translates events, outcomes, decisions, and unknown tools", as
     commands: 4,
     edits: 3,
   });
+  assertCompositionInvariant(result.composition);
   assertCoverageInvariant(result.coverage);
   assert.deepEqual(result.header, {
     cwd: "/workspace/demo",
@@ -615,6 +626,11 @@ test("Codex classifies current lifecycle and tool-discovery records", async (con
   assert.equal(result.coverage.recognized, 3);
   assert.equal(result.coverage.skipped, 5);
   assert.equal(result.coverage.unmapped, 0);
+  assert.equal(
+    result.composition.compaction,
+    Buffer.byteLength(JSON.stringify(records[2])),
+  );
+  assertCompositionInvariant(result.composition);
 });
 
 test("provider coverage does not hide structurally unknown records as skipped", async (context) => {
@@ -788,6 +804,24 @@ test("snapshot JSONL reading is bounded to the opened file state", async (contex
     const values = [];
     await visitJsonlSnapshotEntries(filePath, (entry) => values.push(entry.parsed.value));
     assert.deepEqual(values, ["�"]);
+  });
+
+  await context.test("reports each record's bytes without buffering oversized records", async () => {
+    const filePath = path.join(directory, "record-bytes.jsonl");
+    const firstLine = JSON.stringify({ value: 1 });
+    const oversizedLine = JSON.stringify({ value: "x".repeat(200) });
+    await fs.writeFile(filePath, `${firstLine}\n${oversizedLine}\n`);
+    const entries = [];
+    const read = await visitJsonlSnapshotEntries(
+      filePath,
+      (entry) => entries.push(entry),
+      { maxLineBytes: 32 },
+    );
+
+    assert.equal(entries[0].bytes, Buffer.byteLength(firstLine));
+    assert.equal(entries[1].bytes, Buffer.byteLength(oversizedLine));
+    assert.equal(entries[1].oversized, true);
+    assert.equal(read.snapshotBytes, entries[0].bytes + entries[1].bytes + 2);
   });
 
   await context.test("returns partial entries when the snapshot shrinks", async () => {
