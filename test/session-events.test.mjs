@@ -7,8 +7,10 @@ import {
 } from "../lib/session-event-reader.mjs";
 import {
   createSessionEvent,
+  createSessionEventComposition,
   createSessionEventCoverage,
   createSessionEventHeader,
+  createSessionEventSummary,
   createSessionEventsResult,
   SESSION_EVENT_KIND,
   SESSION_EVENT_COVERAGE_THRESHOLD,
@@ -223,6 +225,23 @@ test("reports recognized coverage apart from deliberate exclusions", () => {
   }), 90);
 });
 
+test("normalizes full-session activity counts", () => {
+  assert.deepEqual(createSessionEventSummary(), {
+    asks: 0,
+    commands: 0,
+    edits: 0,
+  });
+  assert.deepEqual(createSessionEventSummary({ asks: 14, commands: 23, edits: 47 }), {
+    asks: 14,
+    commands: 23,
+    edits: 47,
+  });
+  assert.throws(
+    () => createSessionEventSummary({ edits: -1 }),
+    /summary\.edits must be a non-negative integer/u,
+  );
+});
+
 test("marks a preview complete when the transcript ends before its limit", () => {
   const state = createSessionEventReadState({
     limit: 2,
@@ -291,21 +310,37 @@ test("builds a provider-agnostic extraction result", () => {
     sequence: 0,
     text: "Proceed",
   })];
+  const summary = createSessionEventSummary({ asks: 1, commands: 2, edits: 3 });
+  const composition = createSessionEventComposition({
+    attachments: 15,
+    compaction: 25,
+    edits: 20,
+    largeRecords: 60,
+    messages: 10,
+    other: 5,
+    reasoning: 15,
+    toolOutput: 90,
+    total: 240,
+  });
 
   assert.deepEqual(createSessionEventsResult({
+    composition,
     coverage,
     events,
     header,
+    summary,
     window: {
       complete: false,
       end: SESSION_EVENT_WINDOW_END.OLDEST,
       outcomesMayBeUnresolved: true,
     },
   }), {
+    composition,
     coverage,
     events,
     header,
     reason: null,
+    summary,
     window: {
       complete: false,
       end: "oldest",
@@ -319,6 +354,17 @@ test("builds a provider-agnostic extraction result", () => {
     header,
     reason: SESSION_EVENT_REASON.NO_RECOGNIZED_EVENTS,
   }).reason, "no-recognized-events");
+});
+
+test("session event composition requires an exact byte total", () => {
+  assert.throws(
+    () => createSessionEventComposition({ messages: 10, total: 9 }),
+    /must add up to the transcript size/u,
+  );
+  assert.throws(
+    () => createSessionEventComposition({ messages: -1, total: -1 }),
+    /composition.messages/u,
+  );
 });
 
 test("rejects invalid vocabulary values and inconsistent coverage", () => {

@@ -23,7 +23,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { sessionDateGroupForSort } from "./date-groups.mjs";
+import { sessionDateGroupForSort, sessionDayLabel } from "./date-groups.mjs";
 import {
   newestSessionEvents,
   SESSION_EVENT_BATCH_SIZE,
@@ -169,6 +169,12 @@ const selectionRecord = ({ cwd, displayName, transcriptBytes, updatedAtMs }) => 
   transcriptBytes,
   updatedAtMs,
 });
+
+const percentLabel = (share) => {
+  const percent = share * 100;
+  if (percent > 0 && percent < 1) return "<1%";
+  return `${Math.round(percent)}%`;
+};
 
 const fileSize = (bytes) => {
   if (!Number.isFinite(bytes) || bytes < 0) return "Unknown";
@@ -953,7 +959,7 @@ function App() {
         <div className="flex items-center gap-3.5">
           <div className="brand-mark"><ShieldCheck size={23}/></div>
           <div>
-            <p className="brand-kicker">Local AI coding session manager</p>
+            <p className="brand-kicker">Local AI Session Manager</p>
             <h1 className="brand-title">Session Steward</h1>
           </div>
         </div>
@@ -1031,7 +1037,7 @@ function App() {
           <Pagination page={page} pages={pages} numbers={pageNumbers} setPage={setPage}/>
         </div>
 
-        <Inspector key={`${activeProviderId}:${inspected?.id ?? "empty"}`} onClose={closeInspector} onOpenSession={inspect} providerId={activeProviderId} providerName={activeProviderName} record={inspected}/>
+        <Inspector key={`${activeProviderId}:${inspected?.id ?? "empty"}`} onClose={closeInspector} onOpenSession={inspect} providerId={activeProviderId} record={inspected}/>
       </section>
     </div>
 
@@ -1354,7 +1360,7 @@ function EmptyState({ hasActiveFilters, onClear }) {
   return <div className="empty-state"><div><div className="empty-state-icon"><Search size={19}/></div><h3>{hasActiveFilters ? "No sessions match these filters" : "No sessions found"}</h3><p>{hasActiveFilters ? "Adjust the filters to see more sessions." : "Session Steward did not find any sessions in this folder."}</p>{hasActiveFilters && <button type="button" onClick={onClear} className="button secondary mt-4">Clear filters</button>}</div></div>;
 }
 
-function Inspector({ onClose, onOpenSession, providerId, providerName, record }) {
+function Inspector({ onClose, onOpenSession, providerId, record }) {
   const relatedIds = record ? [...new Set([
     record.parentThreadId,
     record.forkedFromId,
@@ -1364,9 +1370,53 @@ function Inspector({ onClose, onOpenSession, providerId, providerName, record })
   return <><button type="button" aria-label="Close session details" onClick={onClose} className={`inspector-backdrop ${record ? "inspector-backdrop-open" : ""}`}/><aside className={`surface inspector ${record ? "inspector-open" : ""}`}>
     <div className="inspector-header"><p className="panel-label">Session details</p>{record && <button type="button" onClick={onClose} aria-label="Close session details" className="icon-button lg:hidden"><X size={16}/></button>}</div>
     {record
-      ? <div><div className="inspector-content"><div className="flex items-start gap-3"><div className="icon-tile"><FileText size={17}/></div><div className="min-w-0"><h2 className="inspector-title">{record.displayName}</h2><p className="inspector-id">{record.id}</p></div></div><dl className="inspector-details"><Detail icon={Archive} label="Status" value={record.archived ? "Archived" : "Active"}/>{record.surface && <Detail icon={Bot} label="Used in" value={record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"}/>}<Detail icon={FolderKanban} label="Workspace" value={record.cwd || "Not recorded"}/><Detail icon={Clock3} label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail icon={FileText} label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail icon={GitBranch} label="Relationship" value={record.isSubagent ? "Subagent" : record.isFork ? "Fork" : `Primary ${providerName} session`}/></dl></div><SessionTimeline providerId={providerId} record={record}/><RelatedSessions ids={relatedIds} onOpenSession={onOpenSession} providerId={providerId}/></div>
+      ? <div><div className="inspector-content"><div className="min-w-0"><h2 className="inspector-title">{record.displayName}</h2><p className="inspector-id">{record.id}</p></div><ul aria-label="Session labels" className="inspector-chips">{[
+        record.archived ? "Archived" : "Active",
+        // The provider toggle already names the provider, so the chip stays short
+        record.isSubagent ? "Subagent" : record.isFork ? "Fork" : "Primary session",
+        ...(record.surface ? [record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"] : []),
+      ].map((chip) => <li className="inspector-chip" key={chip}>{chip}</li>)}</ul><dl className="inspector-details"><Detail label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail label="Workspace" value={record.cwd || "Not recorded"} wide/></dl></div><InspectorTabs key={record.id} onOpenSession={onOpenSession} providerId={providerId} record={record} relatedIds={relatedIds}/></div>
       : <div className="inspector-empty"><div><div className="inspector-empty-icon"><Info size={18}/></div><h2>Select a session</h2><p>Its location, activity, and linked sessions will appear here.</p></div></div>}
   </aside></>;
+}
+
+const INSPECTOR_TABS = [
+  { id: "timeline", label: "Timeline" },
+  { id: "related", label: "Related" },
+];
+
+function InspectorTabs({ onOpenSession, providerId, record, relatedIds }) {
+  const [selectedTab, setSelectedTab] = useState("timeline");
+  const tabRefs = useRef(new Map());
+
+  function moveFocus(event) {
+    const offset = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (offset === 0) return;
+    event.preventDefault();
+    const index = INSPECTOR_TABS.findIndex(({ id }) => id === selectedTab);
+    const next = INSPECTOR_TABS[(index + offset + INSPECTOR_TABS.length) % INSPECTOR_TABS.length];
+    setSelectedTab(next.id);
+    tabRefs.current.get(next.id)?.focus();
+  }
+
+  return <><div className="inspector-tabs" role="tablist" aria-label="Session details sections" onKeyDown={moveFocus}>{INSPECTOR_TABS.map(({ id, label }) => <button
+    aria-controls={`inspector-panel-${id}`}
+    aria-label={id === "related" ? `Related, ${relatedIds.length.toLocaleString()} linked ${relatedIds.length === 1 ? "session" : "sessions"}` : label}
+    aria-selected={selectedTab === id}
+    id={`inspector-tab-${id}`}
+    key={id}
+    onClick={() => setSelectedTab(id)}
+    ref={(node) => { if (node) tabRefs.current.set(id, node); else tabRefs.current.delete(id); }}
+    role="tab"
+    tabIndex={selectedTab === id ? 0 : -1}
+    type="button"
+  >{label}{id === "related" && <span className="inspector-tab-count">{relatedIds.length.toLocaleString()}</span>}</button>)}</div>
+    <div aria-labelledby="inspector-tab-timeline" className="inspector-tabpanel" hidden={selectedTab !== "timeline"} id="inspector-panel-timeline" role="tabpanel" tabIndex={0}>
+      <SessionTimeline providerId={providerId} record={record}/>
+    </div>
+    <div aria-labelledby="inspector-tab-related" className="inspector-tabpanel" hidden={selectedTab !== "related"} id="inspector-panel-related" role="tabpanel" tabIndex={0}>
+      <RelatedSessions ids={relatedIds} onOpenSession={onOpenSession} providerId={providerId}/>
+    </div></>;
 }
 
 function RelatedSessions({ ids, onOpenSession, providerId }) {
@@ -1399,12 +1449,64 @@ function RelatedSessions({ ids, onOpenSession, providerId }) {
     };
   }, [providerId, visibleKey]);
 
-  if (ids.length === 0) return null;
+  if (ids.length === 0) {
+    return <section className="related-sessions"><div className="timeline-empty"><GitBranch size={18}/><h3>No linked sessions</h3><p>This session has no parent, fork, or subagent sessions.</p></div></section>;
+  }
 
   return <section className="related-sessions"><div className="timeline-heading"><div><p className="panel-label">Related sessions</p><p>{ids.length.toLocaleString()} linked {ids.length === 1 ? "session" : "sessions"}</p></div></div><div className="related-session-list">{visibleIds.map((id) => {
     const related = records[id];
     return <button key={id} type="button" onClick={() => onOpenSession(id)}><GitBranch size={13}/><span className="related-session-copy"><strong>{related?.displayName || "Loading session details"}</strong>{related && <small>{Number.isFinite(related.transcriptBytes) ? fileSize(related.transcriptBytes) : "Size not recorded"} · {age(related.updatedAtMs)}</small>}<code>{id}</code></span><ChevronRight size={13}/></button>;
   })}</div>{visibleCount < ids.length && <button type="button" onClick={() => setVisibleCount((current) => current + 20)} className="timeline-more">View more related sessions</button>}</section>;
+}
+
+// Fixed slot order: colour follows the segment, never its rank, and this order
+// is what the palette was validated against for colour-blind separation.
+const COMPOSITION_SEGMENTS = [
+  { key: "toolOutput", label: "Tool output" },
+  { key: "largeRecords", label: "Large records" },
+  { key: "compaction", label: "Compaction history" },
+  { key: "attachments", label: "Attachments" },
+  { key: "messages", label: "Messages" },
+  { key: "edits", label: "File edits" },
+  { key: "reasoning", label: "Reasoning" },
+  { key: "other", label: "Other" },
+];
+
+function TranscriptComposition({ composition }) {
+  const [active, setActive] = useState(null);
+  if (!composition || composition.total === 0) return null;
+
+  const present = COMPOSITION_SEGMENTS
+    .map((segment) => ({
+      ...segment,
+      bytes: composition[segment.key],
+      share: composition[segment.key] / composition.total,
+    }))
+    .filter(({ bytes }) => bytes > 0);
+  if (present.length === 0) return null;
+
+  const ranked = [...present].sort((left, right) => right.bytes - left.bytes);
+  const describe = ({ bytes, label, share }) => `${label} — ${fileSize(bytes)} (${percentLabel(share)})`;
+
+  return <section className="composition">
+    <div className="composition-heading"><p className="panel-label">Where the space goes</p><p>{fileSize(composition.total)}</p></div>
+    <div aria-hidden="true" className="composition-bar" onMouseLeave={() => setActive(null)}>{present.map((segment) => <span
+      className={`composition-segment ${active && active !== segment.key ? "composition-segment-muted" : ""}`}
+      key={segment.key}
+      onMouseEnter={() => setActive(segment.key)}
+      style={{ background: `var(--segment-${segment.key})`, flexGrow: segment.bytes }}
+      title={describe(segment)}
+    />)}</div>
+    <dl className="composition-legend">{ranked.map((segment) => <div
+      className={`composition-legend-row ${active && active !== segment.key ? "composition-segment-muted" : ""}`}
+      key={segment.key}
+      onMouseEnter={() => setActive(segment.key)}
+      onMouseLeave={() => setActive(null)}
+    >
+      <dt><span aria-hidden="true" className="composition-swatch" style={{ background: `var(--segment-${segment.key})` }}/>{segment.label}</dt>
+      <dd>{fileSize(segment.bytes)}<span>{percentLabel(segment.share)}</span></dd>
+    </div>)}</dl>
+  </section>;
 }
 
 function SessionTimeline({ providerId, record }) {
@@ -1450,15 +1552,38 @@ function SessionTimeline({ providerId, record }) {
     && result.events.length >= eventLimit
     && eventLimit < 1_000;
   const coveragePercent = result ? sessionEventCoveragePercent(result.coverage) : null;
+  const showSummary = result && !result.reason && result.window.complete;
+  const allEventsShown = result && result.events.length < eventLimit;
+  const renderTime = Date.now();
+  let previousEventDay = null;
+  const timelineEvents = displayedEvents.flatMap((event) => {
+    const label = sessionDayLabel(event.atMs, renderTime);
+    const showDay = Boolean(label) && label !== previousEventDay;
+    if (label) previousEventDay = label;
+    const renderedEvent = <SessionEvent event={event} key={`${event.sequence}:${event.kind}`}/>;
+    if (!showDay) return [renderedEvent];
+    return [
+      <div aria-label={label} className="date-separator" key={`day:${event.sequence}:${label}`} role="separator"><span>{label}</span><span aria-hidden="true" className="date-separator-line"/></div>,
+      renderedEvent,
+    ];
+  });
 
-  return <section className="session-timeline" aria-busy={isLoadingEvents}><div className="timeline-heading"><div><p className="panel-label">Session timeline</p><p>{result && !result.reason ? `Newest ${result.events.length.toLocaleString()} events` : "What happened in this session"}</p></div></div><div className="timeline-region">
+  return <section className="session-timeline" aria-busy={isLoadingEvents}>{showSummary
+    ? <dl className="timeline-stats">{[
+      ["Asks", result.summary.asks],
+      ["Edits", result.summary.edits],
+      ["Commands", result.summary.commands],
+    ].map(([label, count]) => <div className="timeline-stat" key={label}><dt className="overview-label">{label}</dt><dd className="overview-value">{count.toLocaleString()}</dd></div>)}</dl>
+    : null}{showSummary ? <TranscriptComposition composition={result.composition}/>
+    : <div className="timeline-heading"><div><p className="panel-label">Session activity</p><p>What happened in this session</p></div></div>}<div className="timeline-region">
     {!result && isLoadingEvents && <div className="timeline-initial-loading" role="status"><RefreshCw size={16} className="animate-spin"/><span>Reading session activity</span></div>}
     {eventsError && <div className="timeline-empty"><AlertTriangle size={18}/><h3>Timeline unavailable</h3><p>{eventsError}</p><button type="button" onClick={() => setRequestVersion((current) => current + 1)} className="button secondary">Try again</button></div>}
     {result?.reason && <><SessionTimelineEmpty reason={result.reason}/><CoverageSummary coverage={result.coverage}/></>}
     {result && !result.reason && <>
       {coveragePercent < SESSION_EVENT_COVERAGE_THRESHOLD && <div className="timeline-coverage-notice" role="status"><Info size={15}/><div><strong>Some session activity could not be shown</strong><p>{coveragePercent}% recognized · {result.coverage.unmapped.toLocaleString()} unmapped · {result.coverage.unparseable.toLocaleString()} unparseable · {result.coverage.oversized.toLocaleString()} oversized</p>{result.coverage.unmappedTypes.length > 0 && <p>Not understood: {result.coverage.unmappedTypes.map(({ count, type }) => `${type} (${count.toLocaleString()})`).join(", ")}</p>}</div></div>}
       {injectedCount > 0 && <button type="button" aria-expanded={showInjected} onClick={() => setShowInjected((current) => !current)} className="injected-events-toggle">{showInjected ? "Hide" : "Show"} {injectedCount.toLocaleString()} injected context {injectedCount === 1 ? "event" : "events"}</button>}
-      <div className="timeline-events">{displayedEvents.map((event) => <SessionEvent event={event} key={`${event.sequence}:${event.kind}`}/>)}</div>
+      <p className="timeline-window-note">{allEventsShown ? `All ${result.events.length.toLocaleString()} events` : `Newest ${result.events.length.toLocaleString()} events`}</p>
+      <div className="timeline-events">{timelineEvents}</div>
       {displayedEvents.length === 0 && injectedCount > 0 && <p className="timeline-quiet-empty">Only injected context was found in this batch.</p>}
       {canShowMore && <button type="button" aria-label={`Show ${SESSION_EVENT_BATCH_SIZE} more session events`} disabled={isLoadingEvents} onClick={() => setEventLimit((current) => Math.min(1_000, current + SESSION_EVENT_BATCH_SIZE))} className="timeline-more">{isLoadingEvents ? "Reading more activity…" : "Show more"}</button>}
       {coveragePercent >= SESSION_EVENT_COVERAGE_THRESHOLD && <CoverageSummary coverage={result.coverage}/>}
@@ -1492,7 +1617,11 @@ function SessionTimelineEmpty({ reason }) {
 
 function SessionEvent({ event }) {
   const failed = event.failed === true || event.applied === false;
-  return <article className={`timeline-event timeline-event-${event.kind} ${failed ? "timeline-event-failed" : ""} ${event.injected ? "timeline-event-injected" : ""}`}><header><span>{event.kind}</span><time>{event.atMs ? new Date(event.atMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Time not recorded"}</time></header><SessionEventBody event={event}/></article>;
+  const eventDate = event.atMs ? new Date(event.atMs) : null;
+  const eventDateTime = eventDate?.toISOString();
+  const eventTitle = eventDate?.toLocaleString([], { dateStyle: "full", timeStyle: "long" });
+  const eventTime = eventDate?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) ?? "Time not recorded";
+  return <article className={`timeline-event timeline-event-${event.kind} ${failed ? "timeline-event-failed" : ""} ${event.injected ? "timeline-event-injected" : ""}`}><header><span>{event.kind}</span><time dateTime={eventDateTime} title={eventTitle}>{eventTime}</time></header><SessionEventBody event={event}/></article>;
 }
 
 function SessionEventBody({ event }) {
@@ -1529,8 +1658,8 @@ function ScrollableEventText({ label, value }) {
   return <div className="timeline-scroll-copy"><div tabIndex={0}>{display.text}</div>{display.expandable && <button type="button" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>{expanded ? "Show less" : `Show full ${label}`}</button>}</div>;
 }
 
-function Detail({ icon: Icon, label, value }) {
-  return <div className="detail-row"><Icon size={14}/><div><dt>{label}</dt><dd>{value}</dd></div></div>;
+function Detail({ label, value, wide = false }) {
+  return <div className={`detail-row${wide ? " detail-row-wide" : ""}`}><dt>{label}</dt><dd>{value}</dd></div>;
 }
 
 function Pagination({ page, pages, numbers, setPage }) {

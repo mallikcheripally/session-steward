@@ -20,6 +20,25 @@ export function sessionDateGroup(timestamp, now = Date.now()) {
   return "Older";
 }
 
+export function sessionDayLabel(timestamp, now = Date.now()) {
+  if (!timestamp) return null;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const day = startOfLocalDay(timestamp);
+  const today = startOfLocalDay(now);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  if (day.getTime() === today.getTime()) return "Today";
+  if (day.getTime() === yesterday.getTime()) return "Yesterday";
+
+  const options = date.getFullYear() === today.getFullYear()
+    ? { day: "numeric", month: "short" }
+    : { day: "numeric", month: "short", year: "numeric" };
+  return date.toLocaleDateString("en-GB", options);
+}
+
 export function sessionDateGroupForSort(record, sort, now = Date.now()) {
   if (sort === "created") return sessionDateGroup(record.createdAtMs, now);
   if (sort === "updated") return sessionDateGroup(record.updatedAtMs, now);

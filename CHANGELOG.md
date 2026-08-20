@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.0] - 2026-08-20
+
+### Added
+
+- Session details now summarize asks, edits, and commands across the full session and show what is using its storage.
+- Timelines now make your messages easier to read, and separate related sessions into their own tab.
+
+### Changed
+
+- Updated Codex and Claude support for their latest local storage formats, including safe cleanup of Codex queue and thread-history data.
+
 ## [0.6.0] - 2026-08-16
 
 ### Added
@@ -112,6 +123,7 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.7.0]: https://github.com/mallikcheripally/session-steward/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mallikcheripally/session-steward/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/mallikcheripally/session-steward/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/mallikcheripally/session-steward/compare/v0.5.0...v0.5.1

@@ -226,7 +226,40 @@ test("JSON event inspection preserves session fields and adds distilled output",
   assert.deepEqual(enriched[0].events.map(({ text }) => text), ["Review the cleanup flow"]);
   assert.equal(enriched[0].coverage.total, 2);
   assert.equal(enriched[0].header.provider, "codex");
+  assert.deepEqual(enriched[0].summary, { asks: 1, commands: 0, edits: 0 });
   assert.equal(result.stderr, "");
+});
+
+test("text event inspection prints the full-session activity summary", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-events-summary-"));
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+  await fs.appendFile(fixture.transcripts.parent, `${JSON.stringify({
+    payload: {
+      content: [{ text: "Review the cleanup flow" }],
+      role: "user",
+      type: "message",
+    },
+    timestamp: "2026-08-01T10:00:00.000Z",
+    type: "response_item",
+  })}\n`);
+
+  const result = await runInteractiveCliResult(
+    ["--codex-home", fixture.codexHome, "--events", "--include-internals"],
+    [
+      { prompt: "session-steward> ", response: "inspect 1" },
+      { prompt: "Press Enter to continue...", response: "" },
+      { prompt: "session-steward> ", response: "quit" },
+    ],
+    xdgConfigHome,
+  );
+
+  assert.match(result.stderr, /^1 ask · 0 edits · 0 commands\nrecognized \d+% · \d+ skipped/u);
 });
 
 test("text event inspection distinguishes transcript states and sends coverage to stderr", async (context) => {

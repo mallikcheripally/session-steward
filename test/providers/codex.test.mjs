@@ -21,8 +21,8 @@ for (const layout of ["state_5", "state_6"]) {
     context.after(() => removeCodexHomeFixture(fixture.codexHome));
     const compatibility = await codex.diagnoseStorageCompatibility({ codexHome: fixture.codexHome });
     assert.equal(compatibility.status, "ready");
-    assert.equal(compatibility.builtFor.codexCli.includes("0.147.0"), true);
-    assert.equal(compatibility.builtFor.chatgptDesktop.includes("26.803.61601"), true);
+    assert.equal(compatibility.builtFor.codexCli.includes("0.148.0"), true);
+    assert.equal(compatibility.builtFor.chatgptDesktop.includes("26.818.22352"), true);
     assert.equal(compatibility.resolvedDatabases.state.primary.filename, `${layout}.sqlite`);
     const listed = await codex.listSessions({
       codexHome: fixture.codexHome,
@@ -66,6 +66,8 @@ test("Codex unions versioned stores, prefers the newest duplicate, and cleans ev
     ["logs_2.sqlite", "logs_3.sqlite", "logs", "thread_id"],
     ["memories_1.sqlite", "memories_2.sqlite", "stage1_outputs", "thread_id"],
     ["goals_1.sqlite", "goals_2.sqlite", "thread_goals", "thread_id"],
+    ["queue_1.sqlite", "queue_2.sqlite", "queued_items", "thread_id"],
+    ["thread_history_1.sqlite", "thread_history_2.sqlite", "thread_items", "thread_id"],
   ];
   for (const [source, destination] of versionedStores) {
     await copyFile(path.join(fixture.codexHome, source), path.join(fixture.codexHome, destination));
@@ -528,11 +530,33 @@ test("deep cleanup backs up, removes, and verifies only the selected family", as
     store,
   });
   assert.equal(plan.dynamicToolRowCount, 2);
+  assert.equal(plan.queueRowCount, 2);
+  assert.equal(plan.queueRevisionRowCount, 2);
+  assert.equal(plan.threadHistoryRowCount, 6);
 
   const result = await codex.executeSessionDeletion({ plan, scope: "deep", store });
   const verification = await codex.verifySessionDeletion({ plan, scope: "deep", store });
   assert.equal(verification.complete, true);
   assert.deepEqual(verification.remainingDynamicTools, []);
+  assert.deepEqual(verification.remainingQueueRecords, []);
+  assert.deepEqual(verification.remainingThreadHistoryRecords, []);
+  assert.deepEqual(
+    queryRows(path.join(fixture.codexHome, "queue_1.sqlite"), "select thread_id from queued_items order by thread_id")
+      .map(({ thread_id }) => ({ thread_id })),
+    [{ thread_id: fixtureSessionIds.standalone }],
+  );
+  assert.deepEqual(
+    queryRows(path.join(fixture.codexHome, "queue_1.sqlite"), "select thread_id from queued_thread_revisions order by thread_id")
+      .map(({ thread_id }) => ({ thread_id })),
+    [{ thread_id: fixtureSessionIds.standalone }],
+  );
+  for (const tableName of ["thread_items", "thread_turns", "thread_history_projection_state"]) {
+    assert.deepEqual(
+      queryRows(path.join(fixture.codexHome, "thread_history_1.sqlite"), `select thread_id from ${tableName} order by thread_id`)
+        .map(({ thread_id }) => ({ thread_id })),
+      [{ thread_id: fixtureSessionIds.standalone }],
+    );
+  }
   assert.deepEqual(
     queryRows(store.stateDatabasePath, "select thread_id from thread_dynamic_tools order by thread_id")
       .map(({ thread_id }) => ({ thread_id })),
@@ -558,6 +582,8 @@ test("deep cleanup backs up, removes, and verifies only the selected family", as
   assert.equal(operation.profileId, "codex-local-store-2026-08");
   assert.equal(operation.compatibilityStatus, "ready");
   assert.equal(operation.resolvedDatabases.state.primary.filename, "state_5.sqlite");
+  assert.equal(operation.resolvedDatabases.queue.primary.filename, "queue_1.sqlite");
+  assert.equal(operation.resolvedDatabases.threadHistory.primary.filename, "thread_history_1.sqlite");
   assert.equal(operation.files.every(({ backupPath, originalPath }) => backupPath && originalPath), true);
 
   const remainingStore = await codex.loadSessionStore({ codexHome: fixture.codexHome });
