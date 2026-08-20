@@ -437,13 +437,13 @@ button:disabled { cursor: not-allowed; }
 .inspector-backdrop { display: none; }
 .inspector-header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-subtle); padding: 16px 20px; }
 .inspector-content { padding: 20px; }
-.icon-tile { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border: 1px solid var(--border-subtle); border-radius: .75rem; color: var(--text-muted); background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
-.inspector-title { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--text-primary); font-size: 16px; font-weight: 400; line-height: 24px; }
+.inspector-title { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--text-primary); font-size: 14px; font-weight: 500; line-height: 20px; }
 .inspector-id { margin-top: 4px; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: var(--text-muted); font-size: 11px; line-height: 16px; }
-.inspector-details { margin-top: 24px; }
-.detail-row { display: grid; grid-template-columns: 20px minmax(0,1fr); gap: 8px; border-bottom: 1px solid var(--border-subtle); padding: 0 0 16px; margin-bottom: 16px; }
-.detail-row:last-child { margin-bottom: 0; border-bottom: 0; padding-bottom: 0; }
-.detail-row > svg { margin-top: 2px; color: var(--text-muted); }
+.inspector-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; padding: 0; list-style: none; }
+.inspector-chip { border-radius: 999px; padding: 4px 10px; color: var(--text-secondary); background: var(--raised); font-size: 11px; font-weight: 600; line-height: 16px; }
+/* Two columns fit every value except the workspace path, which spans both */
+.inspector-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 16px; margin-top: 20px; }
+.detail-row-wide { grid-column: 1 / -1; }
 .detail-row dt { color: var(--text-muted); font-size: 11px; font-weight: 650; line-height: 16px; }
 .detail-row dd { margin-top: 4px; overflow-wrap: anywhere; color: var(--text-secondary); font-size: 13px; line-height: 20px; }
 .inspector-empty { display: grid; min-height: 260px; place-items: center; padding: 28px; text-align: center; }

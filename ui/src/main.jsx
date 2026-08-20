@@ -1037,7 +1037,7 @@ function App() {
           <Pagination page={page} pages={pages} numbers={pageNumbers} setPage={setPage}/>
         </div>
 
-        <Inspector key={`${activeProviderId}:${inspected?.id ?? "empty"}`} onClose={closeInspector} onOpenSession={inspect} providerId={activeProviderId} providerName={activeProviderName} record={inspected}/>
+        <Inspector key={`${activeProviderId}:${inspected?.id ?? "empty"}`} onClose={closeInspector} onOpenSession={inspect} providerId={activeProviderId} record={inspected}/>
       </section>
     </div>
 
@@ -1360,7 +1360,7 @@ function EmptyState({ hasActiveFilters, onClear }) {
   return <div className="empty-state"><div><div className="empty-state-icon"><Search size={19}/></div><h3>{hasActiveFilters ? "No sessions match these filters" : "No sessions found"}</h3><p>{hasActiveFilters ? "Adjust the filters to see more sessions." : "Session Steward did not find any sessions in this folder."}</p>{hasActiveFilters && <button type="button" onClick={onClear} className="button secondary mt-4">Clear filters</button>}</div></div>;
 }
 
-function Inspector({ onClose, onOpenSession, providerId, providerName, record }) {
+function Inspector({ onClose, onOpenSession, providerId, record }) {
   const relatedIds = record ? [...new Set([
     record.parentThreadId,
     record.forkedFromId,
@@ -1370,7 +1370,12 @@ function Inspector({ onClose, onOpenSession, providerId, providerName, record })
   return <><button type="button" aria-label="Close session details" onClick={onClose} className={`inspector-backdrop ${record ? "inspector-backdrop-open" : ""}`}/><aside className={`surface inspector ${record ? "inspector-open" : ""}`}>
     <div className="inspector-header"><p className="panel-label">Session details</p>{record && <button type="button" onClick={onClose} aria-label="Close session details" className="icon-button lg:hidden"><X size={16}/></button>}</div>
     {record
-      ? <div><div className="inspector-content"><div className="flex items-start gap-3"><div className="icon-tile"><FileText size={17}/></div><div className="min-w-0"><h2 className="inspector-title">{record.displayName}</h2><p className="inspector-id">{record.id}</p></div></div><dl className="inspector-details"><Detail icon={Archive} label="Status" value={record.archived ? "Archived" : "Active"}/>{record.surface && <Detail icon={Bot} label="Used in" value={record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"}/>}<Detail icon={FolderKanban} label="Workspace" value={record.cwd || "Not recorded"}/><Detail icon={Clock3} label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail icon={FileText} label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail icon={GitBranch} label="Relationship" value={record.isSubagent ? "Subagent" : record.isFork ? "Fork" : `Primary ${providerName} session`}/></dl></div><InspectorTabs key={record.id} onOpenSession={onOpenSession} providerId={providerId} record={record} relatedIds={relatedIds}/></div>
+      ? <div><div className="inspector-content"><div className="min-w-0"><h2 className="inspector-title">{record.displayName}</h2><p className="inspector-id">{record.id}</p></div><ul aria-label="Session labels" className="inspector-chips">{[
+        record.archived ? "Archived" : "Active",
+        // The provider toggle already names the provider, so the chip stays short
+        record.isSubagent ? "Subagent" : record.isFork ? "Fork" : "Primary session",
+        ...(record.surface ? [record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"] : []),
+      ].map((chip) => <li className="inspector-chip" key={chip}>{chip}</li>)}</ul><dl className="inspector-details"><Detail label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail label="Workspace" value={record.cwd || "Not recorded"} wide/></dl></div><InspectorTabs key={record.id} onOpenSession={onOpenSession} providerId={providerId} record={record} relatedIds={relatedIds}/></div>
       : <div className="inspector-empty"><div><div className="inspector-empty-icon"><Info size={18}/></div><h2>Select a session</h2><p>Its location, activity, and linked sessions will appear here.</p></div></div>}
   </aside></>;
 }
@@ -1653,8 +1658,8 @@ function ScrollableEventText({ label, value }) {
   return <div className="timeline-scroll-copy"><div tabIndex={0}>{display.text}</div>{display.expandable && <button type="button" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>{expanded ? "Show less" : `Show full ${label}`}</button>}</div>;
 }
 
-function Detail({ icon: Icon, label, value }) {
-  return <div className="detail-row"><Icon size={14}/><div><dt>{label}</dt><dd>{value}</dd></div></div>;
+function Detail({ label, value, wide = false }) {
+  return <div className={`detail-row${wide ? " detail-row-wide" : ""}`}><dt>{label}</dt><dd>{value}</dd></div>;
 }
 
 function Pagination({ page, pages, numbers, setPage }) {
