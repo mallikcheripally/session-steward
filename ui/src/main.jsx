@@ -1364,9 +1364,48 @@ function Inspector({ onClose, onOpenSession, providerId, providerName, record })
   return <><button type="button" aria-label="Close session details" onClick={onClose} className={`inspector-backdrop ${record ? "inspector-backdrop-open" : ""}`}/><aside className={`surface inspector ${record ? "inspector-open" : ""}`}>
     <div className="inspector-header"><p className="panel-label">Session details</p>{record && <button type="button" onClick={onClose} aria-label="Close session details" className="icon-button lg:hidden"><X size={16}/></button>}</div>
     {record
-      ? <div><div className="inspector-content"><div className="flex items-start gap-3"><div className="icon-tile"><FileText size={17}/></div><div className="min-w-0"><h2 className="inspector-title">{record.displayName}</h2><p className="inspector-id">{record.id}</p></div></div><dl className="inspector-details"><Detail icon={Archive} label="Status" value={record.archived ? "Archived" : "Active"}/>{record.surface && <Detail icon={Bot} label="Used in" value={record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"}/>}<Detail icon={FolderKanban} label="Workspace" value={record.cwd || "Not recorded"}/><Detail icon={Clock3} label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail icon={FileText} label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail icon={GitBranch} label="Relationship" value={record.isSubagent ? "Subagent" : record.isFork ? "Fork" : `Primary ${providerName} session`}/></dl></div><SessionTimeline providerId={providerId} record={record}/><RelatedSessions ids={relatedIds} onOpenSession={onOpenSession} providerId={providerId}/></div>
+      ? <div><div className="inspector-content"><div className="flex items-start gap-3"><div className="icon-tile"><FileText size={17}/></div><div className="min-w-0"><h2 className="inspector-title">{record.displayName}</h2><p className="inspector-id">{record.id}</p></div></div><dl className="inspector-details"><Detail icon={Archive} label="Status" value={record.archived ? "Archived" : "Active"}/>{record.surface && <Detail icon={Bot} label="Used in" value={record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"}/>}<Detail icon={FolderKanban} label="Workspace" value={record.cwd || "Not recorded"}/><Detail icon={Clock3} label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail icon={FileText} label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail icon={GitBranch} label="Relationship" value={record.isSubagent ? "Subagent" : record.isFork ? "Fork" : `Primary ${providerName} session`}/></dl></div><InspectorTabs key={record.id} onOpenSession={onOpenSession} providerId={providerId} record={record} relatedIds={relatedIds}/></div>
       : <div className="inspector-empty"><div><div className="inspector-empty-icon"><Info size={18}/></div><h2>Select a session</h2><p>Its location, activity, and linked sessions will appear here.</p></div></div>}
   </aside></>;
+}
+
+const INSPECTOR_TABS = [
+  { id: "timeline", label: "Timeline" },
+  { id: "related", label: "Related" },
+];
+
+function InspectorTabs({ onOpenSession, providerId, record, relatedIds }) {
+  const [selectedTab, setSelectedTab] = useState("timeline");
+  const tabRefs = useRef(new Map());
+
+  function moveFocus(event) {
+    const offset = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (offset === 0) return;
+    event.preventDefault();
+    const index = INSPECTOR_TABS.findIndex(({ id }) => id === selectedTab);
+    const next = INSPECTOR_TABS[(index + offset + INSPECTOR_TABS.length) % INSPECTOR_TABS.length];
+    setSelectedTab(next.id);
+    tabRefs.current.get(next.id)?.focus();
+  }
+
+  return <><div className="inspector-tabs" role="tablist" aria-label="Session details sections" onKeyDown={moveFocus}>{INSPECTOR_TABS.map(({ id, label }) => <button
+    aria-controls={`inspector-panel-${id}`}
+    aria-label={id === "related" ? `Related, ${relatedIds.length.toLocaleString()} linked ${relatedIds.length === 1 ? "session" : "sessions"}` : label}
+    aria-selected={selectedTab === id}
+    id={`inspector-tab-${id}`}
+    key={id}
+    onClick={() => setSelectedTab(id)}
+    ref={(node) => { if (node) tabRefs.current.set(id, node); else tabRefs.current.delete(id); }}
+    role="tab"
+    tabIndex={selectedTab === id ? 0 : -1}
+    type="button"
+  >{label}{id === "related" && <span className="inspector-tab-count">{relatedIds.length.toLocaleString()}</span>}</button>)}</div>
+    <div aria-labelledby="inspector-tab-timeline" className="inspector-tabpanel" hidden={selectedTab !== "timeline"} id="inspector-panel-timeline" role="tabpanel" tabIndex={0}>
+      <SessionTimeline providerId={providerId} record={record}/>
+    </div>
+    <div aria-labelledby="inspector-tab-related" className="inspector-tabpanel" hidden={selectedTab !== "related"} id="inspector-panel-related" role="tabpanel" tabIndex={0}>
+      <RelatedSessions ids={relatedIds} onOpenSession={onOpenSession} providerId={providerId}/>
+    </div></>;
 }
 
 function RelatedSessions({ ids, onOpenSession, providerId }) {
@@ -1399,18 +1438,14 @@ function RelatedSessions({ ids, onOpenSession, providerId }) {
     };
   }, [providerId, visibleKey]);
 
-  if (ids.length === 0) return null;
+  if (ids.length === 0) {
+    return <section className="related-sessions"><div className="timeline-empty"><GitBranch size={18}/><h3>No linked sessions</h3><p>This session has no parent, fork, or subagent sessions.</p></div></section>;
+  }
 
   return <section className="related-sessions"><div className="timeline-heading"><div><p className="panel-label">Related sessions</p><p>{ids.length.toLocaleString()} linked {ids.length === 1 ? "session" : "sessions"}</p></div></div><div className="related-session-list">{visibleIds.map((id) => {
     const related = records[id];
     return <button key={id} type="button" onClick={() => onOpenSession(id)}><GitBranch size={13}/><span className="related-session-copy"><strong>{related?.displayName || "Loading session details"}</strong>{related && <small>{Number.isFinite(related.transcriptBytes) ? fileSize(related.transcriptBytes) : "Size not recorded"} · {age(related.updatedAtMs)}</small>}<code>{id}</code></span><ChevronRight size={13}/></button>;
   })}</div>{visibleCount < ids.length && <button type="button" onClick={() => setVisibleCount((current) => current + 20)} className="timeline-more">View more related sessions</button>}</section>;
-}
-
-function sessionActivitySummaryText({ asks, commands, edits }) {
-  if (asks === 0 && commands === 0 && edits === 0) return "No recorded activity";
-  const countLabel = (count, label) => `${count.toLocaleString()} ${label}${count === 1 ? "" : "s"}`;
-  return [countLabel(asks, "ask"), countLabel(edits, "edit"), countLabel(commands, "command")].join(" · ");
 }
 
 function SessionTimeline({ providerId, record }) {
@@ -1472,7 +1507,13 @@ function SessionTimeline({ providerId, record }) {
     ];
   });
 
-  return <section className="session-timeline" aria-busy={isLoadingEvents}><div className="timeline-heading"><div><p className="panel-label">Session timeline</p><p>{showSummary ? sessionActivitySummaryText(result.summary) : "What happened in this session"}</p></div></div><div className="timeline-region">
+  return <section className="session-timeline" aria-busy={isLoadingEvents}>{showSummary
+    ? <dl className="timeline-stats">{[
+      ["Asks", result.summary.asks],
+      ["Edits", result.summary.edits],
+      ["Commands", result.summary.commands],
+    ].map(([label, count]) => <div className="timeline-stat" key={label}><dt className="overview-label">{label}</dt><dd className="overview-value">{count.toLocaleString()}</dd></div>)}</dl>
+    : <div className="timeline-heading"><div><p className="panel-label">Session activity</p><p>What happened in this session</p></div></div>}<div className="timeline-region">
     {!result && isLoadingEvents && <div className="timeline-initial-loading" role="status"><RefreshCw size={16} className="animate-spin"/><span>Reading session activity</span></div>}
     {eventsError && <div className="timeline-empty"><AlertTriangle size={18}/><h3>Timeline unavailable</h3><p>{eventsError}</p><button type="button" onClick={() => setRequestVersion((current) => current + 1)} className="button secondary">Try again</button></div>}
     {result?.reason && <><SessionTimelineEmpty reason={result.reason}/><CoverageSummary coverage={result.coverage}/></>}
