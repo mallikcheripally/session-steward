@@ -307,6 +307,77 @@ export async function createCodexHomeFixture({
         (${sqlValue(fixtureSessionIds.parent)}, 'waiting');
     `,
   );
+  createDatabase(
+    path.join(codexHome, "queue_1.sqlite"),
+    `
+      create table queued_items (
+        id text primary key,
+        thread_id text not null,
+        payload_json text not null,
+        queue_order integer not null,
+        created_at_ms integer not null,
+        updated_at_ms integer not null
+      );
+      create table queued_thread_revisions (
+        revision integer primary key autoincrement,
+        thread_id text not null unique
+      );
+      create trigger queued_items_revision_after_delete
+      after delete on queued_items
+      begin
+        insert into queued_thread_revisions (thread_id)
+        values (old.thread_id)
+        on conflict(thread_id) do update
+        set revision = (select coalesce(max(revision), 0) + 1 from queued_thread_revisions);
+      end;
+      insert into queued_items values
+        ('queue-parent', ${sqlValue(fixtureSessionIds.parent)}, '{}', 1, 1751364000000, 1751364000000),
+        ('queue-child', ${sqlValue(fixtureSessionIds.child)}, '{}', 2, 1751364100000, 1751364100000),
+        ('queue-standalone', ${sqlValue(fixtureSessionIds.standalone)}, '{}', 3, 1751364200000, 1751364200000);
+      insert into queued_thread_revisions (thread_id) values
+        (${sqlValue(fixtureSessionIds.parent)}),
+        (${sqlValue(fixtureSessionIds.child)}),
+        (${sqlValue(fixtureSessionIds.standalone)});
+    `,
+  );
+  createDatabase(
+    path.join(codexHome, "thread_history_1.sqlite"),
+    `
+      create table thread_turns (
+        thread_id text not null,
+        turn_id text not null,
+        rollout_ordinal integer not null,
+        status text not null,
+        primary key (thread_id, turn_id)
+      );
+      create table thread_items (
+        thread_id text not null,
+        turn_id text not null,
+        item_id text not null,
+        rollout_ordinal integer not null,
+        created_at_ms integer not null,
+        item_json text not null,
+        primary key (thread_id, turn_id, item_id)
+      );
+      create table thread_history_projection_state (
+        thread_id text primary key,
+        next_rollout_byte_offset integer not null,
+        next_rollout_ordinal integer not null
+      );
+      insert into thread_turns values
+        (${sqlValue(fixtureSessionIds.parent)}, 'turn-parent', 1, 'completed'),
+        (${sqlValue(fixtureSessionIds.child)}, 'turn-child', 1, 'completed'),
+        (${sqlValue(fixtureSessionIds.standalone)}, 'turn-standalone', 1, 'completed');
+      insert into thread_items values
+        (${sqlValue(fixtureSessionIds.parent)}, 'turn-parent', 'item-parent', 2, 1751364000000, '{}'),
+        (${sqlValue(fixtureSessionIds.child)}, 'turn-child', 'item-child', 2, 1751364100000, '{}'),
+        (${sqlValue(fixtureSessionIds.standalone)}, 'turn-standalone', 'item-standalone', 2, 1751364200000, '{}');
+      insert into thread_history_projection_state values
+        (${sqlValue(fixtureSessionIds.parent)}, 100, 3),
+        (${sqlValue(fixtureSessionIds.child)}, 100, 3),
+        (${sqlValue(fixtureSessionIds.standalone)}, 100, 3);
+    `,
+  );
 
   const sessionIndex = [
     { id: fixtureSessionIds.parent, thread_name: "Safer cleanup", updated_at: "2026-07-01T11:00:00.000Z" },
