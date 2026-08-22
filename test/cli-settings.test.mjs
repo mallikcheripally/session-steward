@@ -230,6 +230,142 @@ test("JSON event inspection preserves session fields and adds distilled output",
   assert.equal(result.stderr, "");
 });
 
+function tokenCountRecord(total, last) {
+  return `${JSON.stringify({
+    payload: {
+      info: { last_token_usage: last, model_context_window: 258_400, total_token_usage: total },
+      type: "token_count",
+    },
+    timestamp: "2026-08-01T10:00:00.000Z",
+    type: "event_msg",
+  })}\n`;
+}
+
+function tokenUsage({ cached = 0, input = 0, output = 0, reasoning = 0 }) {
+  return {
+    cache_write_input_tokens: 0,
+    cached_input_tokens: cached,
+    input_tokens: input,
+    output_tokens: output,
+    reasoning_output_tokens: reasoning,
+    total_tokens: input + output,
+  };
+}
+
+async function appendTokenEvents(transcriptPath) {
+  const turn = tokenUsage({ cached: 6000, input: 9000, output: 1000, reasoning: 400 });
+  await fs.appendFile(transcriptPath, [
+    tokenCountRecord(tokenUsage({ cached: 6000, input: 9000, output: 1000 }), turn),
+    // Re-emitted: the running total does not move, so it is not a second turn.
+    tokenCountRecord(tokenUsage({ cached: 6000, input: 9000, output: 1000 }), turn),
+    tokenCountRecord(tokenUsage({ cached: 12_000, input: 18_000, output: 2000 }), turn),
+  ].join(""));
+}
+
+test("JSON output carries token usage when asked, and leaves it out otherwise", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-tokens-json-"));
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+  await appendTokenEvents(fixture.transcripts.parent);
+
+  const plain = JSON.parse(await runCli([
+    "--codex-home", fixture.codexHome,
+    "--include-internals",
+    "--json",
+  ], xdgConfigHome));
+  assert.equal(plain.every((record) => record.tokens === undefined), true);
+
+  const enriched = JSON.parse(await runCli([
+    "--codex-home", fixture.codexHome,
+    "--include-internals",
+    "--json",
+    "--tokens",
+  ], xdgConfigHome));
+  const parent = enriched.find(({ id }) => id === fixtureSessionIds.parent);
+
+  assert.equal(parent.tokens.available, true);
+  // Two turns of 10,000, not three: the re-emitted event is not new spend.
+  assert.equal(parent.tokens.total, 20_000);
+  assert.equal(parent.tokens.segments.reduce((sum, { tokens }) => sum + tokens, 0), 20_000);
+  assert.deepEqual(
+    Object.fromEntries(parent.tokens.segments.map(({ key, tokens }) => [key, tokens])),
+    { cacheWrites: 0, cachedInput: 12_000, freshInput: 6000, output: 2000 },
+  );
+  assert.equal(parent.tokens.reasoning.tokens, 800);
+  assert.equal(parent.tokens.cacheHitRate, 12_000 / 18_000);
+});
+
+test("interactive inspection prints token usage only once the toggle is on", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-tokens-text-"));
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+  await appendTokenEvents(fixture.transcripts.parent);
+
+  const withoutToggle = await runInteractiveCli(
+    ["--codex-home", fixture.codexHome, "--include-internals"],
+    [
+      { prompt: "session-steward> ", response: "inspect 1" },
+      { prompt: "Press Enter to continue...", response: "" },
+      { prompt: "session-steward> ", response: "quit" },
+    ],
+    xdgConfigHome,
+  );
+  assert.equal(withoutToggle.includes("Token usage"), false);
+
+  const withToggle = await runInteractiveCli(
+    ["--codex-home", fixture.codexHome, "--include-internals", "--tokens"],
+    [
+      { prompt: "session-steward> ", response: "inspect 1" },
+      { prompt: "Press Enter to continue...", response: "" },
+      { prompt: "session-steward> ", response: "quit" },
+    ],
+    xdgConfigHome,
+  );
+  assert.match(withToggle, /Token usage/u);
+  assert.match(withToggle, /Total: 20\.0K/u);
+  assert.match(withToggle, /Cached input: 12\.0K \(60%\)/u);
+  assert.match(withToggle, /Reasoning: 800 \(40% of output\)/u);
+  assert.match(withToggle, /Cache hits: 67% of input/u);
+});
+
+test("the tokens toggle turns the breakdown on from inside the session", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-tokens-toggle-"));
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+  await appendTokenEvents(fixture.transcripts.parent);
+
+  const result = await runInteractiveCli(
+    ["--codex-home", fixture.codexHome, "--include-internals"],
+    [
+      { prompt: "session-steward> ", response: "tokens" },
+      { prompt: "Press Enter to continue...", response: "" },
+      { prompt: "session-steward> ", response: "inspect 1" },
+      { prompt: "Press Enter to continue...", response: "" },
+      { prompt: "session-steward> ", response: "quit" },
+    ],
+    xdgConfigHome,
+  );
+
+  assert.match(result, /Token usage in session details is on\./u);
+  assert.match(result, /Tokens: shown/u);
+  assert.match(result, /Total: 20\.0K/u);
+});
+
 test("text event inspection prints the full-session activity summary", async (context) => {
   const fixture = await createCodexHomeFixture();
   const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-events-summary-"));

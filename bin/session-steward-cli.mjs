@@ -29,6 +29,9 @@ const { values } = parseArgs({
     events: {
       type: "boolean",
     },
+    tokens: {
+      type: "boolean",
+    },
     "events-limit": {
       type: "string",
     },
@@ -116,6 +119,7 @@ async function main() {
     providerId,
     search: values.search ?? "",
     sort: values.sort ?? "updated",
+    tokens: values.tokens ?? false,
     workspace: values.workspace,
   });
 }

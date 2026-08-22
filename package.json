@@ -59,6 +59,7 @@
     "benchmark:overview": "node --expose-gc test/benchmarks/codex-overview.mjs",
     "benchmark:scale": "node --expose-gc test/benchmarks/codex-list.mjs",
     "benchmark:size": "node --expose-gc test/benchmarks/codex-size.mjs",
+    "benchmark:tokens": "node --expose-gc test/benchmarks/session-tokens.mjs",
     "benchmark:transcripts": "node --expose-gc test/benchmarks/codex-transcripts.mjs",
     "benchmark:versioned-stores": "node --expose-gc test/benchmarks/codex-versioned-stores.mjs",
     "prepack": "npm run build",

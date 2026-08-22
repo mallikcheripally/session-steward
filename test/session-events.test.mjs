@@ -341,6 +341,7 @@ test("builds a provider-agnostic extraction result", () => {
     header,
     reason: null,
     summary,
+    tokens: null,
     window: {
       complete: false,
       end: "oldest",

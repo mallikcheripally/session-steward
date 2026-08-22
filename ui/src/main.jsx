@@ -176,6 +176,17 @@ const percentLabel = (share) => {
   return `${Math.round(percent)}%`;
 };
 
+// Token counts run to the hundreds of millions, where digit groups stop being
+// readable at a glance. Exact figures stay in the tooltip.
+const tokenCount = (tokens) => {
+  if (!Number.isFinite(tokens) || tokens < 0) return "Unknown";
+  if (tokens < 1000) return String(tokens);
+  const units = [["B", 1e9], ["M", 1e6], ["K", 1e3]];
+  const [suffix, size] = units.find(([, value]) => tokens >= value);
+  const scaled = tokens / size;
+  return `${scaled >= 100 ? Math.round(scaled) : scaled.toFixed(scaled >= 10 ? 1 : 2)}${suffix}`;
+};
+
 const fileSize = (bytes) => {
   if (!Number.isFinite(bytes) || bytes < 0) return "Unknown";
   if (bytes < 1024) return `${bytes} bytes`;
@@ -1361,6 +1372,18 @@ function EmptyState({ hasActiveFilters, onClear }) {
 }
 
 function Inspector({ onClose, onOpenSession, providerId, record }) {
+  // Both are tracked against the session they belong to, so selecting another
+  // one cannot inherit the previous session's state before an effect clears it.
+  const [tabChoice, setTabChoice] = useState({ id: null, tab: "timeline" });
+  const [tokenReport, setTokenReport] = useState({ error: "", id: null, tokens: null });
+  const selectedTab = record && tabChoice.id === record.id ? tabChoice.tab : "timeline";
+  const selectTab = (tab) => setTabChoice({ id: record?.id ?? null, tab });
+  // The timeline read already streams the whole transcript, so it brings the
+  // count back with it. Asking for it separately meant reading the same file
+  // twice — on the same single-threaded server, so the two starved each other.
+  const tokenState = record && tokenReport.id === record.id
+    ? { error: tokenReport.error, tokens: tokenReport.tokens }
+    : { error: "", tokens: null };
   const relatedIds = record ? [...new Set([
     record.parentThreadId,
     record.forkedFromId,
@@ -1375,18 +1398,18 @@ function Inspector({ onClose, onOpenSession, providerId, record }) {
         // The provider toggle already names the provider, so the chip stays short
         record.isSubagent ? "Subagent" : record.isFork ? "Fork" : "Primary session",
         ...(record.surface ? [record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"] : []),
-      ].map((chip) => <li className="inspector-chip" key={chip}>{chip}</li>)}</ul><dl className="inspector-details"><Detail label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail label="Workspace" value={record.cwd || "Not recorded"} wide/></dl></div><InspectorTabs key={record.id} onOpenSession={onOpenSession} providerId={providerId} record={record} relatedIds={relatedIds}/></div>
+      ].map((chip) => <li className="inspector-chip" key={chip}>{chip}</li>)}</ul><dl className="inspector-details"><Detail label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail label="Tokens" value={tokenSummaryLabel(tokenState)}/><Detail label="Model" value={modelSummaryLabel(tokenState)}/><Detail label="Workspace" value={record.cwd || "Not recorded"} wide/></dl></div><InspectorTabs key={record.id} onOpenSession={onOpenSession} onSelectTab={selectTab} onTokens={setTokenReport} providerId={providerId} record={record} relatedIds={relatedIds} selectedTab={selectedTab} tokenState={tokenState}/></div>
       : <div className="inspector-empty"><div><div className="inspector-empty-icon"><Info size={18}/></div><h2>Select a session</h2><p>Its location, activity, and linked sessions will appear here.</p></div></div>}
   </aside></>;
 }
 
 const INSPECTOR_TABS = [
   { id: "timeline", label: "Timeline" },
+  { id: "tokens", label: "Tokens" },
   { id: "related", label: "Related" },
 ];
 
-function InspectorTabs({ onOpenSession, providerId, record, relatedIds }) {
-  const [selectedTab, setSelectedTab] = useState("timeline");
+function InspectorTabs({ onOpenSession, onSelectTab, onTokens, providerId, record, relatedIds, selectedTab, tokenState }) {
   const tabRefs = useRef(new Map());
 
   function moveFocus(event) {
@@ -1395,7 +1418,7 @@ function InspectorTabs({ onOpenSession, providerId, record, relatedIds }) {
     event.preventDefault();
     const index = INSPECTOR_TABS.findIndex(({ id }) => id === selectedTab);
     const next = INSPECTOR_TABS[(index + offset + INSPECTOR_TABS.length) % INSPECTOR_TABS.length];
-    setSelectedTab(next.id);
+    onSelectTab(next.id);
     tabRefs.current.get(next.id)?.focus();
   }
 
@@ -1405,14 +1428,17 @@ function InspectorTabs({ onOpenSession, providerId, record, relatedIds }) {
     aria-selected={selectedTab === id}
     id={`inspector-tab-${id}`}
     key={id}
-    onClick={() => setSelectedTab(id)}
+    onClick={() => onSelectTab(id)}
     ref={(node) => { if (node) tabRefs.current.set(id, node); else tabRefs.current.delete(id); }}
     role="tab"
     tabIndex={selectedTab === id ? 0 : -1}
     type="button"
   >{label}{id === "related" && <span className="inspector-tab-count">{relatedIds.length.toLocaleString()}</span>}</button>)}</div>
     <div aria-labelledby="inspector-tab-timeline" className="inspector-tabpanel" hidden={selectedTab !== "timeline"} id="inspector-panel-timeline" role="tabpanel" tabIndex={0}>
-      <SessionTimeline providerId={providerId} record={record}/>
+      <SessionTimeline onTokens={onTokens} providerId={providerId} record={record}/>
+    </div>
+    <div aria-labelledby="inspector-tab-tokens" className="inspector-tabpanel" hidden={selectedTab !== "tokens"} id="inspector-panel-tokens" role="tabpanel" tabIndex={0}>
+      <SessionTokens {...tokenState}/>
     </div>
     <div aria-labelledby="inspector-tab-related" className="inspector-tabpanel" hidden={selectedTab !== "related"} id="inspector-panel-related" role="tabpanel" tabIndex={0}>
       <RelatedSessions ids={relatedIds} onOpenSession={onOpenSession} providerId={providerId}/>
@@ -1472,6 +1498,103 @@ const COMPOSITION_SEGMENTS = [
   { key: "other", label: "Other" },
 ];
 
+const TOKEN_SEGMENTS = [
+  { key: "cachedInput", label: "Cached input" },
+  { key: "freshInput", label: "Fresh input" },
+  { key: "cacheWrites", label: "Cache writes" },
+  { key: "output", label: "Output" },
+];
+
+const TOKEN_WARNINGS = {
+  "cache-write-underflow": "Cache-write reporting looked inconsistent, so fresh input is an approximation.",
+  "fork-parent-missing": "This session was forked, but the session it branched from is no longer on disk, so its earlier tokens cannot be separated out.",
+  "incomplete-scan": "The transcript could not be read all the way through, so this is a partial count.",
+};
+
+// Counting tokens means reading the whole transcript. Rather than a number that
+// appears from nothing, the shape of the answer is drawn while it is read.
+function Skeleton({ width }) {
+  return <span aria-hidden="true" className="skeleton" style={{ width }}/>;
+}
+
+const NOT_COUNTED = Object.freeze({ available: false, reason: "not-counted" });
+
+const TOKEN_UNAVAILABLE = {
+  "no-transcript-path": "This session has no transcript location recorded, so its tokens cannot be counted.",
+  "not-counted": "This read did not include a token count.",
+  "transcript-missing": "This session's transcript is no longer on disk, so its tokens cannot be counted.",
+};
+
+function TokensSkeleton() {
+  return <section className="composition" aria-busy="true">
+    <p className="sr-only" role="status">Counting tokens</p>
+    <div className="composition-heading"><p className="panel-label">Where the tokens went</p><Skeleton width="52px"/></div>
+    <div aria-hidden="true" className="composition-bar"><Skeleton width="100%"/></div>
+    <dl className="composition-legend">{[68, 58, 46, 62].map((width, index) => <div className="composition-legend-row" key={width}>
+      <dt><span aria-hidden="true" className="composition-swatch skeleton"/><Skeleton width={`${width}px`}/></dt>
+      <dd><Skeleton width={index === 0 ? "56px" : "44px"}/></dd>
+    </div>)}</dl>
+  </section>;
+}
+
+function SessionTokens({ error, tokens }) {
+  const [active, setActive] = useState(null);
+
+  // The error check comes first: a failed read leaves `tokens` null, so a
+  // skeleton would sit there for good.
+  if (error) return <p className="tab-note">{error}</p>;
+  if (!tokens) return <TokensSkeleton/>;
+  if (!tokens.available) {
+    return <p className="tab-note">{TOKEN_UNAVAILABLE[tokens.reason] ?? "No token usage was recorded for this session."}</p>;
+  }
+
+  const present = TOKEN_SEGMENTS
+    .map((segment) => ({ ...segment, ...tokens.segments.find(({ key }) => key === segment.key) }))
+    .filter(({ tokens: value }) => value > 0);
+  const ranked = [...TOKEN_SEGMENTS.map((segment) => ({
+    ...segment,
+    ...tokens.segments.find(({ key }) => key === segment.key),
+  }))].sort((left, right) => right.tokens - left.tokens);
+  const describe = ({ label, share, tokens: value }) => `${label} — ${value.toLocaleString()} tokens (${percentLabel(share)})`;
+
+  return <section className="composition">
+    {tokens.inherited && <dl className="token-split">
+      <div><dt>Own work</dt><dd>{tokenCount(tokens.total)}</dd></div>
+      <div><dt>Inherited from parent</dt><dd>{tokenCount(tokens.inherited.tokens)}</dd></div>
+      <p>This session was forked. The inherited tokens were spent in the session it branched from, so they are shown separately and left out of the breakdown below.</p>
+    </dl>}
+    <div className="composition-heading"><p className="panel-label">Where the tokens went</p><p title={`${tokens.total.toLocaleString()} tokens`}>{tokenCount(tokens.total)}</p></div>
+    <div aria-hidden="true" className="composition-bar" onMouseLeave={() => setActive(null)}>{present.map((segment) => <span
+      className={`composition-segment ${active && active !== segment.key ? "composition-segment-muted" : ""}`}
+      key={segment.key}
+      onMouseEnter={() => setActive(segment.key)}
+      style={{ background: `var(--token-${segment.key})`, flexGrow: segment.tokens }}
+      title={describe(segment)}
+    />)}</div>
+    <dl className="composition-legend">{ranked.map((segment) => <div
+      className={`composition-legend-row ${active && active !== segment.key ? "composition-segment-muted" : ""}`}
+      key={segment.key}
+      onMouseEnter={() => setActive(segment.key)}
+      onMouseLeave={() => setActive(null)}
+    >
+      <dt><span aria-hidden="true" className="composition-swatch" style={{ background: `var(--token-${segment.key})` }}/>{segment.label}</dt>
+      <dd title={`${segment.tokens.toLocaleString()} tokens`}>{tokenCount(segment.tokens)}<span>{percentLabel(segment.share)}</span></dd>
+      {/* Reasoning is part of output, so it hangs off that row rather than claiming a slice of its own. */}
+      {segment.key === "output" && tokens.reasoning && <p className="token-sub-row">Reasoning<span title={`${tokens.reasoning.tokens.toLocaleString()} tokens`}>{tokenCount(tokens.reasoning.tokens)} · {percentLabel(tokens.reasoning.share)} of output</span></p>}
+    </div>)}</dl>
+    {tokens.cacheHitRate !== null && <p className="token-insight">{percentLabel(tokens.cacheHitRate)} of input was served from cache.</p>}
+    {tokens.byModel.length > 1 && <div className="token-models">
+      <p className="panel-label">By model</p>
+      <dl className="composition-legend">{tokens.byModel.map(({ model, share, tokens: value }) => <div className="composition-legend-row" key={model}>
+        <dt>{model}</dt>
+        <dd title={`${value.toLocaleString()} tokens`}>{tokenCount(value)}<span>{percentLabel(share)}</span></dd>
+      </div>)}</dl>
+    </div>}
+    {tokens.compactions > 0 && <p className="token-note">Context compacted {tokens.compactions.toLocaleString()} {tokens.compactions === 1 ? "time" : "times"}. Each compaction re-sends the conversation, so the totals include that repeated cost.</p>}
+    {tokens.warnings.map((warning) => <p className="token-note" key={warning}>{TOKEN_WARNINGS[warning] ?? warning}</p>)}
+  </section>;
+}
+
 function TranscriptComposition({ composition }) {
   const [active, setActive] = useState(null);
   if (!composition || composition.total === 0) return null;
@@ -1509,7 +1632,7 @@ function TranscriptComposition({ composition }) {
   </section>;
 }
 
-function SessionTimeline({ providerId, record }) {
+function SessionTimeline({ onTokens, providerId, record }) {
   const [eventLimit, setEventLimit] = useState(SESSION_EVENT_BATCH_SIZE);
   const [eventsError, setEventsError] = useState("");
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
@@ -1529,10 +1652,17 @@ function SessionTimeline({ providerId, record }) {
     });
     api(`/api/session-events?${params}`, { signal: controller.signal })
       .then((nextResult) => {
-        if (current) setResult(nextResult);
+        if (!current) return;
+        setResult(nextResult);
+        // The same read produced both, so the panel's header fields resolve
+        // exactly when the timeline does. A response without a count is an
+        // answer too — anything but null, which would sit as a skeleton.
+        onTokens?.({ error: "", id: record.id, tokens: nextResult.tokens ?? NOT_COUNTED });
       })
       .catch((issue) => {
-        if (current && issue.name !== "AbortError") setEventsError(issue.message);
+        if (!current || issue.name === "AbortError") return;
+        setEventsError(issue.message);
+        onTokens?.({ error: issue.message, id: record.id, tokens: null });
       })
       .finally(() => {
         if (current) setIsLoadingEvents(false);
@@ -1541,7 +1671,7 @@ function SessionTimeline({ providerId, record }) {
       current = false;
       controller.abort();
     };
-  }, [eventLimit, providerId, record.id, requestVersion]);
+  }, [eventLimit, onTokens, providerId, record.id, requestVersion]);
 
   const events = result ? newestSessionEvents(result.events) : [];
   const injectedCount = events.filter((event) => event.kind === "ask" && event.injected).length;
@@ -1657,6 +1787,24 @@ function ScrollableEventText({ label, value }) {
   const display = sessionEventText(value, expanded);
   return <div className="timeline-scroll-copy"><div tabIndex={0}>{display.text}</div>{display.expandable && <button type="button" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>{expanded ? "Show less" : `Show full ${label}`}</button>}</div>;
 }
+
+const tokenSummaryLabel = ({ error, tokens }) => {
+  if (error) return "Unavailable";
+  // Nothing has been read yet, so any word here would be a guess.
+  if (!tokens) return <Skeleton width="54px"/>;
+  if (!tokens.available) return "Not recorded";
+  return tokenCount(tokens.total);
+};
+
+// A session can switch model part-way through, so naming only one would be
+// wrong. The Tokens tab carries the split.
+const modelSummaryLabel = ({ error, tokens }) => {
+  if (error) return "Unavailable";
+  if (!tokens) return <Skeleton width="96px"/>;
+  if (!tokens.available || tokens.byModel.length === 0) return "Not recorded";
+  const [{ model }] = tokens.byModel;
+  return tokens.byModel.length > 1 ? `${model} +${tokens.byModel.length - 1}` : model;
+};
 
 function Detail({ label, value, wide = false }) {
   return <div className={`detail-row${wide ? " detail-row-wide" : ""}`}><dt>{label}</dt><dd>{value}</dd></div>;
