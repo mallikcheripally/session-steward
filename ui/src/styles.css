@@ -525,7 +525,14 @@ button:disabled { cursor: not-allowed; }
 .timeline-empty .button { margin-top: 14px; }
 .timeline-quiet-empty { padding: 16px 20px; color: var(--text-muted); font-size: 11px; text-align: center; }
 
+/* Four categorical hues, validated against this surface for lightness band,
+   chroma floor, CVD separation and contrast. Legend rows carry text labels, so
+   identity never rests on colour alone. */
 .composition {
+  --token-cachedInput: #199e70;
+  --token-freshInput: #3987e5;
+  --token-cacheWrites: #c98500;
+  --token-output: #9085e9;
   --segment-toolOutput: #3987e5;
   --segment-largeRecords: #d95926;
   --segment-compaction: #199e70;
@@ -546,12 +553,60 @@ button:disabled { cursor: not-allowed; }
 .composition-segment:last-child { border-radius: 2px 4px 4px 2px; }
 .composition-segment-muted { opacity: .26; }
 .composition-legend { display: grid; gap: 1px; margin-top: 12px; }
-.composition-legend-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 -6px; border-radius: 6px; padding: 3px 6px; transition: background 150ms ease-out, opacity 150ms ease-out; }
+.composition-legend-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 0 -6px; border-radius: 6px; padding: 3px 6px; transition: background 150ms ease-out, opacity 150ms ease-out; }
 .composition-legend-row:hover { background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
 .composition-legend-row dt { display: flex; min-width: 0; align-items: center; gap: 8px; overflow: hidden; color: var(--text-secondary); font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
 .composition-legend-row dd { display: flex; flex: 0 0 auto; align-items: baseline; gap: 8px; color: var(--text-primary); font-size: 12px; font-weight: 600; line-height: 18px; font-variant-numeric: tabular-nums; }
 .composition-legend-row dd span { min-width: 30px; color: var(--text-muted); font-weight: 500; text-align: right; }
 .composition-swatch { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 2px; }
+/* Drawn while a transcript is being read, so a pending count reads as work in
+   progress rather than a value that failed to arrive. */
+.skeleton {
+  display: inline-block;
+  height: 1em;
+  min-width: 24px;
+  border-radius: 4px;
+  vertical-align: -0.15em;
+  background:
+    linear-gradient(90deg,
+      var(--raised) 0%,
+      color-mix(in srgb, var(--text-primary) 12%, var(--raised)) 50%,
+      var(--raised) 100%)
+    0 0 / 200% 100%;
+  animation: skeleton-wave 1.5s ease-in-out infinite;
+}
+
+.composition-bar .skeleton { height: 10px; border-radius: 2px; }
+.composition-swatch.skeleton { min-width: 0; height: 8px; }
+
+@keyframes skeleton-wave {
+  from { background-position: 150% 0; }
+  to { background-position: -50% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; background: var(--raised); }
+}
+
+.tab-note { padding: 16px 20px; color: var(--text-muted); font-size: 12px; line-height: 18px; }
+
+/* A fork's rollout replays its parent's turns, so the two halves are stated
+   before the breakdown, which describes own work only. */
+.token-split { margin-bottom: 16px; border: 1px solid var(--border-subtle); border-radius: 8px; padding: 10px 12px; }
+.token-split > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.token-split > div + div { margin-top: 4px; }
+.token-split dt { color: var(--text-secondary); font-size: 12px; line-height: 18px; }
+.token-split dd { color: var(--text-primary); font-size: 12px; font-weight: 600; line-height: 18px; font-variant-numeric: tabular-nums; }
+.token-split p { margin-top: 8px; color: var(--text-muted); font-size: 11px; line-height: 16px; }
+
+/* Reasoning is a share of output, not a segment, so it hangs under that row. */
+.token-sub-row { display: flex; flex: 0 0 100%; justify-content: space-between; gap: 12px; padding-left: 16px; color: var(--text-muted); font-size: 11px; line-height: 16px; }
+.token-sub-row span { font-variant-numeric: tabular-nums; }
+
+.token-insight { margin-top: 12px; color: var(--text-secondary); font-size: 12px; line-height: 18px; }
+.token-models { margin-top: 16px; border-top: 1px solid var(--border-subtle); padding-top: 12px; }
+.token-note { margin-top: 12px; color: var(--text-muted); font-size: 11px; line-height: 16px; }
+
 .timeline-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 16px 20px; }
 .timeline-stat { min-width: 0; }
 .timeline-stat .overview-value { margin-top: 2px; color: var(--text-primary); }

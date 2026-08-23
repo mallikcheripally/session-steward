@@ -6,3 +6,4 @@ dist/
 coverage/
 *.tgz
 scripts/
+artifacts/

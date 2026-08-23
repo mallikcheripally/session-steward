@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0] - 2026-08-23
+
+### Added
+
+- Session details now show how many tokens a Codex or Claude session used, with clear breakdowns for input, cache use, output, reasoning, models, and inherited work in forked sessions.
+- The same token breakdown is available in the terminal with `--tokens`.
+
 ## [0.7.0] - 2026-08-20
 
 ### Added
@@ -123,6 +130,7 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.8.0]: https://github.com/mallikcheripally/session-steward/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/mallikcheripally/session-steward/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mallikcheripally/session-steward/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/mallikcheripally/session-steward/compare/v0.5.1...v0.5.2

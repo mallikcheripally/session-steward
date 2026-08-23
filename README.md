@@ -21,6 +21,7 @@ Session Steward makes session cleanup safer by finding those records, showing wh
 - Filter active or archived sessions by workspace, name, or session ID.
 - Inspect session details and affected records before deletion.
 - Read a session timeline of what you asked, what changed, and which commands ran.
+- See how many tokens a session used, split into fresh input, cached input, cache writes, and output.
 - Choose standard or thorough cleanup.
 - Use custom Codex or Claude home folders across browser and terminal sessions.
 
@@ -165,6 +166,20 @@ With `--json`, each session carries its own `events`, plus a `coverage` summary 
 session-steward-cli --json --limit 5 --events
 ```
 
+Use `--tokens` to count what a session spent. The total is split into fresh input, cached input, cache writes, and output, with reasoning reported as a share of output where the provider records it:
+
+```bash
+session-steward-cli --tokens
+```
+
+In the interactive list, `tokens` toggles the same breakdown into `inspect`. With `--json`, each session carries a `tokens` object:
+
+```bash
+session-steward-cli --json --limit 5 --tokens
+```
+
+Cached input usually dominates, because the whole conversation is re-sent on every turn. A forked session reports its own work separately from the tokens it inherited from the session it branched from, so the two are never added together.
+
 The interactive terminal accepts the same filters:
 
 ```text
@@ -176,6 +191,7 @@ archive archived
 workspace /path/to/project
 internals
 supporting
+tokens
 cleanup standard
 cleanup thorough
 overview
