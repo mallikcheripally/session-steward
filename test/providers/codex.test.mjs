@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, appendFile, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import test from "node:test";
@@ -150,6 +150,39 @@ test("Codex single-store SQL paging matches union paging", async (context) => {
     const union = await codex.listSessions({ codexHome: fixture.codexHome, forceUnion: true, ...query });
     assert.deepEqual(fast, union);
   }
+});
+
+test("Codex filters the full collection by minimum transcript size before paging", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  await appendFile(fixture.transcripts.parent, "p".repeat(4_096));
+  await appendFile(fixture.transcripts.child, "c".repeat(2_048));
+  codex.invalidateSessionCache({ codexHome: fixture.codexHome });
+  const minimumTranscriptBytes = (await stat(fixture.transcripts.child)).size;
+
+  const firstPage = await codex.listSessions({
+    codexHome: fixture.codexHome,
+    includeInternals: true,
+    includeSupporting: true,
+    minimumTranscriptBytes,
+    page: 1,
+    pageSize: 1,
+  });
+  const secondPage = await codex.listSessions({
+    codexHome: fixture.codexHome,
+    includeInternals: true,
+    includeSupporting: true,
+    minimumTranscriptBytes,
+    page: 2,
+    pageSize: 1,
+  });
+
+  assert.equal(firstPage.total, 2);
+  assert.equal(firstPage.pageCount, 2);
+  assert.equal(firstPage.records[0].id, fixtureSessionIds.parent);
+  assert.equal(secondPage.records[0].id, fixtureSessionIds.child);
+  assert.ok([...firstPage.records, ...secondPage.records]
+    .every((record) => record.transcriptBytes >= minimumTranscriptBytes));
 });
 
 test("Codex tolerates missing optional thread fields and a missing spawn table", async (context) => {

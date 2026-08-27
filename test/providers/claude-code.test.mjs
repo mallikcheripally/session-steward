@@ -242,6 +242,26 @@ test("Claude sorts the full filtered collection by transcript size", async (cont
   assert.equal(result.records[0].id, fixture.cliId);
 });
 
+test("Claude filters the full collection by minimum transcript size before paging", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  await fs.appendFile(fixture.cliTranscript, "x".repeat(4_096));
+  claude.invalidateSessionCache(fixture);
+  const minimumTranscriptBytes = (await fs.stat(fixture.cliTranscript)).size;
+
+  const result = await claude.listSessions({
+    ...fixture,
+    minimumTranscriptBytes,
+    page: 1,
+    pageSize: 1,
+  });
+
+  assert.equal(result.total, 1);
+  assert.equal(result.pageCount, 1);
+  assert.equal(result.records[0].id, fixture.cliId);
+  assert.ok(result.records[0].transcriptBytes >= minimumTranscriptBytes);
+});
+
 test("Claude standard cleanup removes exact artifacts and restores them without touching worktrees", async (context) => {
   const fixture = await createClaudeHomeFixture();
   context.after(() => removeClaudeHomeFixture(fixture));
