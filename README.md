@@ -14,7 +14,7 @@ Session Steward makes session cleanup safer by finding those records, showing wh
 
 ## Manage local Codex and Claude Code sessions
 
-- Review sessions in a browser UI or terminal CLI.
+- Review and clean up sessions from the browser, terminal, ChatGPT, or Claude through MCP.
 - Switch between Codex and Claude Code without installing another package.
 - See session counts and the storage used by recognized session files.
 - Find sessions inactive for 30, 60, or 90 days.
@@ -22,7 +22,6 @@ Session Steward makes session cleanup safer by finding those records, showing wh
 - Inspect session details and affected records before deletion.
 - Read a session timeline of what you asked, what changed, and which commands ran.
 - See how many tokens a session used, split into fresh input, cached input, cache writes, and output.
-- Find and safely delete old sessions by asking ChatGPT or Claude through MCP.
 - Choose standard or thorough cleanup.
 - Use custom Codex or Claude home folders across browser and terminal sessions.
 
