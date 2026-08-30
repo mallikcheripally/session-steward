@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { createProviderSettings } from "../lib/settings.mjs";
 import { getProvider } from "../lib/providers/index.mjs";
+import { acquireSessionMutationLock } from "../lib/session-cleanup.mjs";
 import { queryRows } from "../lib/storage/sqlite.mjs";
 import {
   createCodexHomeFixture,
@@ -174,7 +175,7 @@ test("help does not read provider settings", async (context) => {
   const output = await runCli(["--help"], unusableConfigHome);
   assert.match(output, /^Usage: session-steward-cli/u);
   assert.match(output, /--archive-status <status>/u);
-  assert.match(output, /--inactive-days <30\|60\|90>/u);
+  assert.match(output, /--inactive-days <days>/u);
   assert.match(output, /--workspace <path>/u);
   assert.match(output, /--provider <codex\|claude-code>/u);
   assert.match(output, /--include-supporting/u);
@@ -491,7 +492,7 @@ test("the terminal CLI reports overview and recovery backups as JSON", async (co
   assert.equal(backups[0].scope, "core");
 });
 
-test("the interactive CLI defaults to standard cleanup and removes verified backups", async (context) => {
+test("the interactive CLI defaults to thorough cleanup and removes verified backups", async (context) => {
   const fixture = await createCodexHomeFixture();
   const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-standard-"));
   context.after(async () => {
@@ -511,21 +512,55 @@ test("the interactive CLI defaults to standard cleanup and removes verified back
     xdgConfigHome,
   );
 
-  assert.match(output, /Cleanup: Standard/u);
+  assert.match(output, /Cleanup: Thorough/u);
   assert.match(output, /Deleted and verified 2 sessions/u);
   assert.equal(
     queryRows(path.join(fixture.codexHome, "memories_1.sqlite"), "select count(*) as count from stage1_outputs")[0].count,
-    2,
+    0,
   );
   assert.equal(
     queryRows(path.join(fixture.codexHome, "goals_1.sqlite"), "select count(*) as count from thread_goals")[0].count,
-    2,
+    0,
   );
   const provider = getProvider("codex");
   assert.deepEqual(await provider.listSessionDeletionBackups({ codexHome: fixture.codexHome }), []);
 });
 
-test("the interactive CLI runs thorough cleanup only when requested", async (context) => {
+test("the interactive CLI respects a provider lock owned by another process", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-lock-"));
+  const provider = getProvider("codex");
+  const release = await acquireSessionMutationLock({
+    options: { codexHome: fixture.codexHome },
+    provider,
+  });
+  context.after(async () => {
+    await release().catch(() => {});
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+
+  const output = await runInteractiveCli(
+    ["--codex-home", fixture.codexHome],
+    [
+      { prompt: "session-steward> ", response: `delete ${fixtureSessionIds.standalone}` },
+      { prompt: 'to confirm: ', response: "DELETE" },
+      { prompt: "Press Enter to continue...", response: "" },
+      { prompt: "session-steward> ", response: "quit" },
+    ],
+    xdgConfigHome,
+  );
+
+  assert.match(output, /already using this Codex folder/u);
+  assert.equal((await provider.getSessionRecord({
+    codexHome: fixture.codexHome,
+    id: fixtureSessionIds.standalone,
+  })).id, fixtureSessionIds.standalone);
+});
+
+test("the interactive CLI runs standard cleanup only when requested", async (context) => {
   const fixture = await createCodexHomeFixture();
   const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-thorough-"));
   context.after(async () => {
@@ -536,7 +571,7 @@ test("the interactive CLI runs thorough cleanup only when requested", async (con
   });
 
   const output = await runInteractiveCli(
-    ["--codex-home", fixture.codexHome, "--include-internals", "--cleanup", "thorough"],
+    ["--codex-home", fixture.codexHome, "--include-internals", "--cleanup", "standard"],
     [
       { prompt: "session-steward> ", response: `delete ${fixtureSessionIds.parent}` },
       { prompt: 'to confirm: ', response: "DELETE 2" },
@@ -545,14 +580,43 @@ test("the interactive CLI runs thorough cleanup only when requested", async (con
     xdgConfigHome,
   );
 
-  assert.match(output, /Cleanup: Thorough/u);
+  assert.match(output, /Cleanup: Standard/u);
   assert.equal(
     queryRows(path.join(fixture.codexHome, "memories_1.sqlite"), "select count(*) as count from stage1_outputs")[0].count,
-    0,
+    2,
   );
   assert.equal(
     queryRows(path.join(fixture.codexHome, "goals_1.sqlite"), "select count(*) as count from thread_goals")[0].count,
-    0,
+    2,
+  );
+});
+
+test("the interactive CLI visibly falls back to standard when thorough cleanup is unsupported", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-fallback-"));
+  await fs.writeFile(path.join(fixture.codexHome, "state_6.sqlite"), "not a sqlite database");
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+
+  const output = await runInteractiveCli(
+    ["--codex-home", fixture.codexHome, "--include-internals"],
+    [
+      { prompt: "session-steward> ", response: `delete ${fixtureSessionIds.parent}` },
+      { prompt: "to confirm: ", response: "DELETE 2" },
+      { prompt: "session-steward> ", response: "quit" },
+    ],
+    xdgConfigHome,
+  );
+
+  assert.match(output, /Cleanup: Thorough/u);
+  assert.match(output, /Using standard cleanup/u);
+  assert.equal(
+    queryRows(path.join(fixture.codexHome, "memories_1.sqlite"), "select count(*) as count from stage1_outputs")[0].count,
+    2,
   );
 });
 
@@ -708,7 +772,7 @@ test("the terminal CLI filters inactive sessions by exact workspace", async (con
     "--json",
     "--include-internals",
     "--inactive-days",
-    "90",
+    "50",
     "--workspace",
     otherWorkspace,
   ], xdgConfigHome));
@@ -721,9 +785,9 @@ test("the terminal CLI filters inactive sessions by exact workspace", async (con
       fixture.codexHome,
       "--json",
       "--inactive-days",
-      "45",
+      "0",
     ], xdgConfigHome),
-    (error) => error.stderr === "Inactive days must be 30, 60, or 90.\n",
+    (error) => error.stderr === "Inactive days must be a whole number between 1 and 3650.\n",
   );
 });
 

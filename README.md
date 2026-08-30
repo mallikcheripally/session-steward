@@ -4,7 +4,7 @@
 [![Build status](https://img.shields.io/github/actions/workflow/status/mallikcheripally/session-steward/validate.yml?branch=main&style=flat-square&label=build)](https://github.com/mallikcheripally/session-steward/actions/workflows/validate.yml)
 [![License: MIT](https://img.shields.io/npm/l/session-steward?style=flat-square)](https://github.com/mallikcheripally/session-steward/blob/main/LICENSE)
 
-A local Codex and Claude Code session manager for safely reviewing, backing up, and deleting old sessions from a browser UI or terminal CLI. It also includes an MCP server for inspecting sessions with AI.
+A local Codex and Claude Code session manager for safely reviewing, backing up, and deleting old sessions from a browser UI or terminal CLI, or through MCP with ChatGPT or Claude.
 
 AI coding tools can accumulate hundreds or thousands of local sessions. A session may leave behind transcripts, history, logs, checkpoints, and linked artifacts, so manual cleanup can easily miss related data.
 
@@ -14,7 +14,7 @@ Session Steward makes session cleanup safer by finding those records, showing wh
 
 ## Manage local Codex and Claude Code sessions
 
-- Review sessions in a browser UI or terminal CLI.
+- Review and clean up sessions from the browser, terminal, ChatGPT, or Claude through MCP.
 - Switch between Codex and Claude Code without installing another package.
 - See session counts and the storage used by recognized session files.
 - Find sessions inactive for 30, 60, or 90 days.
@@ -22,7 +22,6 @@ Session Steward makes session cleanup safer by finding those records, showing wh
 - Inspect session details and affected records before deletion.
 - Read a session timeline of what you asked, what changed, and which commands ran.
 - See how many tokens a session used, split into fresh input, cached input, cache writes, and output.
-- Let compatible local MCP clients inspect sessions and help identify what is worth reviewing.
 - Choose standard or thorough cleanup.
 - Use custom Codex or Claude home folders across browser and terminal sessions.
 
@@ -34,7 +33,7 @@ Session Steward makes session cleanup safer by finding those records, showing wh
 - Cleanup is verified before the backup is removed.
 - Unrecognized storage is reported and left untouched.
 - Thorough cleanup is unavailable when the detected storage format is not supported.
-- Browser and terminal cleanup stay local and do not upload session contents.
+- Cleanup stays local and does not upload session contents.
 
 At startup, Session Steward may contact the public npm registry to check for a newer version.
 
@@ -207,34 +206,45 @@ Run `inactive`, `archive`, or `workspace` without a value to clear that filter.
 
 Use `session-steward-cli --help` to see all available options.
 
-## Read-only MCP server
+## Clean up sessions with ChatGPT or Claude
 
-Session Steward includes `session-steward-mcp`, a local MCP server for Codex,
-and Claude Code. It can list and inspect sessions, timelines, storage, and
-token usage. It cannot delete, back up, restore, or change anything.
+Connect Session Steward once, then ask ChatGPT or Claude to find old or large
+sessions, delete them safely, restore a backup, or clean sessions automatically
+on a schedule.
 
-Once configured, you can ask naturally:
-
-- “Find old chats I have not used in 2 months that are over 500 MB.”
-- “Show sessions from project x workspace, sorted by size, inactive for a month.”
-- “Show the timeline and token usage for this session.”
-
-Install Session Steward globally first, then register it with the clients you
-use.
-
-For Codex:
+Connect it to ChatGPT and Codex:
 
 ```bash
 codex mcp add session-steward -- session-steward-mcp
 ```
 
-For Claude Code:
+Connect it to Claude Code:
 
 ```bash
 claude mcp add --scope user session-steward -- session-steward-mcp
 ```
 
-Check or remove the configuration at any time:
+You can then ask things like:
+
+- “Find sessions I have not used in 60 days.”
+- “Show sessions from this workspace, largest first.”
+- “Delete those sessions.”
+- “Every 12 days, delete sessions I have not used in 45 days.”
+- “Restore my latest backup.”
+
+Cleanup uses the same local backup and verification checks as the browser and
+terminal. Codex or Claude Code asks for approval before cleanup, restore, or
+schedule changes.
+
+Scheduled cleanup continues in the background after you close Codex or Claude
+Code. You can ask to pause, resume, run, change, or remove a schedule. Before
+uninstalling Session Steward, stop scheduled cleanup:
+
+```bash
+session-steward-scheduler --stop
+```
+
+Check or remove the MCP connection at any time:
 
 ```bash
 codex mcp list
@@ -244,12 +254,7 @@ claude mcp list
 claude mcp remove --scope user session-steward
 ```
 
-Removing the MCP configuration does not uninstall Session Steward or change any
-sessions. Use the normal npm uninstall command only if you also want to remove
-the package.
-
-For another compatible client, configure a local `stdio` server named
-`session-steward` with `session-steward-mcp` as its command:
+For another MCP client, add a local server named `session-steward`:
 
 ```json
 {
@@ -261,31 +266,14 @@ For another compatible client, configure a local `stdio` server named
 }
 ```
 
-### Custom provider folders
+The MCP server uses the same provider folders selected in the browser or
+terminal.
 
-The MCP server uses the same saved Codex and Claude home folders as the browser
-and terminal interfaces. You can override either folder in the MCP command:
+### Privacy
 
-```bash
-codex mcp add session-steward -- session-steward-mcp \
-  --codex-home /path/to/.codex \
-  --claude-home /path/to/.claude
-```
-
-### Privacy and access
-
-- The MCP server runs locally with your user account's file permissions.
-- Every tool call must choose `codex` or `claude-code`; it does not combine the
-  providers silently.
-- Lists and timelines are bounded, and provider database and transcript paths
-  are omitted from results.
-- Timeline results can contain session messages, commands, file names, and
-  workspace paths. Only request a timeline when that content is appropriate to
-  share with the configured client.
-- Session Steward does not upload MCP results itself. Your MCP client may send
-  tool results to its AI provider under that product's privacy terms.
-- MCP tools are read-only. Cleanup remains available only through the browser UI
-  and terminal CLI, with the existing review, backup, and verification flow.
+The MCP server runs locally. Session details can include messages, commands,
+file names, and workspace paths, and your MCP client may send that information
+to its AI provider.
 
 ## Use a custom provider folder
 

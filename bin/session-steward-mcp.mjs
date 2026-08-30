@@ -20,8 +20,8 @@ const { values } = parseArgs({
 if (values.help) {
   process.stdout.write(`Usage: session-steward-mcp [options]
 
-Run Session Steward's read-only MCP server over stdio. MCP clients start and
-stop this process automatically.
+Run Session Steward's MCP server over stdio. MCP clients start and stop this
+process automatically. Destructive tools use the client's normal approval flow.
 
 Options:
   --codex-home <path>  Use a custom Codex session folder
@@ -38,7 +38,7 @@ if (values.version) {
 }
 
 const { createProviderSettings } = await import("../lib/settings.mjs");
-const { serveReadOnlyMcp } = await import("../lib/mcp.mjs");
+const { serveMcp } = await import("../lib/mcp.mjs");
 const providerHomeOverrides = {};
 
 if (values["codex-home"] !== undefined) {
@@ -49,7 +49,7 @@ if (values["claude-home"] !== undefined) {
 }
 
 const settings = await createProviderSettings({ providerHomeOverrides });
-const handle = serveReadOnlyMcp({
+const handle = serveMcp({
   onerror: (error) => process.stderr.write(`Session Steward MCP error: ${error.message}\n`),
   settings,
 });

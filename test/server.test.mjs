@@ -9,6 +9,11 @@ import test from "node:test";
 
 import { startLocalServer } from "../lib/server.mjs";
 import {
+  acquireSessionMutationLock,
+  SESSION_MUTATION_BUSY,
+} from "../lib/session-cleanup.mjs";
+import { getProvider } from "../lib/providers/index.mjs";
+import {
   createCodexHomeFixture,
   createLargeCodexHomeFixture,
   fixtureSessionIds,
@@ -196,6 +201,32 @@ async function runDeletion(baseUrl, token, planId) {
   assert.equal(response.status, 202, body.error);
   return waitForOperation(baseUrl, body.operation);
 }
+
+test("the browser cleanup flow respects a provider lock owned by another process", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const server = await startLocalServer({ codexHome: fixture.codexHome, port: 0 });
+  const release = await acquireSessionMutationLock({
+    options: { codexHome: fixture.codexHome },
+    provider: getProvider("codex"),
+  });
+  context.after(async () => {
+    await release().catch(() => {});
+    await server.close().catch(() => {});
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const config = await fetch(`${baseUrl}/api/config`).then((response) => response.json());
+  const plan = await createDeletionPlan(baseUrl, [fixtureSessionIds.standalone]);
+  const operation = await runDeletion(baseUrl, config.mutationToken, plan.id);
+
+  assert.equal(operation.status, "failed");
+  assert.equal(operation.errorCode, SESSION_MUTATION_BUSY);
+  assert.match(operation.error, /already using this Codex folder/u);
+  assert.equal((await getProvider("codex").getSessionRecord({
+    codexHome: fixture.codexHome,
+    id: fixtureSessionIds.standalone,
+  })).id, fixtureSessionIds.standalone);
+});
 
 function requestLocalServer({
   body,
@@ -510,7 +541,7 @@ test("the sessions API filters inactive sessions and exact workspaces", async (c
   const baseUrl = `http://127.0.0.1:${server.port}`;
 
   const inactiveResponse = await fetch(
-    `${baseUrl}/api/sessions?inactiveDays=60&includeInternals=true&includeSupporting=true`,
+    `${baseUrl}/api/sessions?inactiveDays=50&includeInternals=true&includeSupporting=true`,
   );
   const inactive = await inactiveResponse.json();
   assert.equal(inactiveResponse.status, 200);
@@ -539,9 +570,11 @@ test("the sessions API filters inactive sessions and exact workspaces", async (c
     error: "Session status must be all, active, or archived.",
   });
 
-  const invalidResponse = await fetch(`${baseUrl}/api/sessions?inactiveDays=45`);
+  const invalidResponse = await fetch(`${baseUrl}/api/sessions?inactiveDays=0`);
   assert.equal(invalidResponse.status, 400);
-  assert.deepEqual(await invalidResponse.json(), { error: "Last activity must be 30, 60, or 90 days." });
+  assert.deepEqual(await invalidResponse.json(), {
+    error: "Last activity must be a whole number between 1 and 3650 days.",
+  });
 
   const malformedResponse = await fetch(`${baseUrl}/api/sessions?inactiveDays=30days`);
   assert.equal(malformedResponse.status, 400);

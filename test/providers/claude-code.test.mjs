@@ -15,7 +15,7 @@ for (const layout of ["current", "alternate"]) {
     const compatibility = await claude.diagnoseStorageCompatibility(fixture);
     assert.equal(compatibility.status, "ready");
     assert.equal(compatibility.builtFor.claudeCli.includes("2.1.237"), true);
-    assert.equal(compatibility.builtFor.claudeDesktop.includes("1.32885.1"), true);
+    assert.equal(compatibility.builtFor.claudeDesktop.includes("1.40609.0"), true);
     const listed = await claude.listSessions({ ...fixture, page: 1, pageSize: 25 });
     assert.equal(listed.total, 3);
     const store = await claude.loadDeletionStore({ ...fixture, recordIds: [fixture.cliId] });

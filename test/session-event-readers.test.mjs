@@ -633,6 +633,47 @@ test("Codex classifies current lifecycle and tool-discovery records", async (con
   assertCompositionInvariant(result.composition);
 });
 
+test("Claude Code skips current Desktop bookkeeping records", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  const records = [
+    {
+      cwd: "/workspace/demo",
+      entrypoint: "cli",
+      sessionId: fixture.cliId,
+      timestamp: "2026-08-01T10:00:00.000Z",
+      type: "system",
+    },
+    {
+      entrypoint: "cli",
+      message: { content: [{ text: "Review the current session.", type: "text" }] },
+      sessionId: fixture.cliId,
+      timestamp: "2026-08-01T10:00:01.000Z",
+      type: "user",
+    },
+    { atis: true, sessionId: fixture.cliId, type: "atis-latch" },
+    {
+      bridgeSessionId: "bridge",
+      lastSequenceNum: 1,
+      sessionId: fixture.cliId,
+      type: "bridge-session",
+    },
+  ];
+  await fs.writeFile(fixture.cliTranscript, records.map(jsonLine).join(""));
+  claude.invalidateSessionCache(fixture);
+
+  const result = await claude.readSessionEvents({
+    ...fixture,
+    id: fixture.cliId,
+  });
+
+  assert.equal(result.coverage.recognized, 1);
+  assert.equal(result.coverage.skipped, 3);
+  assert.equal(result.coverage.unmapped, 0);
+  assert.deepEqual(result.coverage.unmappedTypes, []);
+  assertCoverageInvariant(result.coverage);
+});
+
 test("provider coverage does not hide structurally unknown records as skipped", async (context) => {
   await context.test("Codex", async (subcontext) => {
     const fixture = await createCodexHomeFixture();
