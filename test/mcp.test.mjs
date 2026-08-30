@@ -223,7 +223,13 @@ test("MCP reads and updates only Session Steward provider settings", async (cont
   const fixture = await createCodexHomeFixture();
   const claudeFixture = await createClaudeHomeFixture();
   const configDirectory = path.join(fixture.codexHome, "mcp-settings");
-  const settings = await createProviderSettings({ configDirectory });
+  const settings = await createProviderSettings({
+    configDirectory,
+    providerHomeOverrides: {
+      "claude-code": claudeFixture.claudeHome,
+      codex: fixture.codexHome,
+    },
+  });
   const connection = await connect(settings);
   context.after(async () => {
     await connection.close();
@@ -238,7 +244,7 @@ test("MCP reads and updates only Session Steward provider settings", async (cont
     provider: "codex",
   });
   assert.equal(initial.settings.activeProvider, "codex");
-  assert.equal(initial.settings.providers.codex.source, "default");
+  assert.equal(initial.settings.providers.codex.source, "startup");
 
   const saved = await call(connection.client, "manage_settings", {
     action: "set-provider-home",

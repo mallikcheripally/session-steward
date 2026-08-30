@@ -251,8 +251,11 @@ for (const platform of ["darwin", "linux", "win32"]) {
       ) active = false;
       return { stderr: "", stdout: "" };
     };
+    const configDirectory = platform === "win32"
+      ? "C:\\Users\\test\\steward config"
+      : `/tmp/session-steward-service-${platform}/steward config`;
     const service = createCleanupSchedulerService({
-      configDirectory: path.join(home, "steward config"),
+      configDirectory,
       environment: {},
       execute,
       home,
