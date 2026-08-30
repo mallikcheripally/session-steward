@@ -4,7 +4,7 @@
 [![Build status](https://img.shields.io/github/actions/workflow/status/mallikcheripally/session-steward/validate.yml?branch=main&style=flat-square&label=build)](https://github.com/mallikcheripally/session-steward/actions/workflows/validate.yml)
 [![License: MIT](https://img.shields.io/npm/l/session-steward?style=flat-square)](https://github.com/mallikcheripally/session-steward/blob/main/LICENSE)
 
-A local Codex and Claude Code session manager for safely reviewing, backing up, and deleting old sessions from a browser UI, terminal CLI, ChatGPT, or Claude.
+A local Codex and Claude Code session manager for safely reviewing, backing up, and deleting old sessions from a browser UI or terminal CLI, or through MCP with ChatGPT or Claude.
 
 AI coding tools can accumulate hundreds or thousands of local sessions. A session may leave behind transcripts, history, logs, checkpoints, and linked artifacts, so manual cleanup can easily miss related data.
 
