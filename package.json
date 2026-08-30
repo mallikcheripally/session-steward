@@ -1,6 +1,6 @@
 {
   "name": "session-steward",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Codex and Claude Code session manager - browse, back up, and delete old sessions. Local browser UI + CLI.",
   "license": "MIT",
   "author": "Mallik Cheripally",
@@ -8,7 +8,8 @@
   "bin": {
     "session-steward": "bin/session-steward.mjs",
     "session-steward-cli": "bin/session-steward-cli.mjs",
-    "session-steward-mcp": "bin/session-steward-mcp.mjs"
+    "session-steward-mcp": "bin/session-steward-mcp.mjs",
+    "session-steward-scheduler": "bin/session-steward-scheduler.mjs"
   },
   "repository": {
     "type": "git",
