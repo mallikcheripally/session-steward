@@ -364,6 +364,15 @@ export async function createCodexHomeFixture({
         next_rollout_byte_offset integer not null,
         next_rollout_ordinal integer not null
       );
+      create table thread_realtime_items (
+        thread_id text not null,
+        item_id text not null,
+        rollout_ordinal integer not null,
+        created_at_ms integer not null,
+        item_type text not null,
+        item_json text not null,
+        primary key (thread_id, item_id)
+      );
       insert into thread_turns values
         (${sqlValue(fixtureSessionIds.parent)}, 'turn-parent', 1, 'completed'),
         (${sqlValue(fixtureSessionIds.child)}, 'turn-child', 1, 'completed'),
@@ -376,6 +385,10 @@ export async function createCodexHomeFixture({
         (${sqlValue(fixtureSessionIds.parent)}, 100, 3),
         (${sqlValue(fixtureSessionIds.child)}, 100, 3),
         (${sqlValue(fixtureSessionIds.standalone)}, 100, 3);
+      insert into thread_realtime_items values
+        (${sqlValue(fixtureSessionIds.parent)}, 'realtime-parent', 3, 1751364000000, 'realtime_session_started', '{}'),
+        (${sqlValue(fixtureSessionIds.child)}, 'realtime-child', 3, 1751364100000, 'realtime_session_started', '{}'),
+        (${sqlValue(fixtureSessionIds.standalone)}, 'realtime-standalone', 3, 1751364200000, 'realtime_session_started', '{}');
     `,
   );
 
