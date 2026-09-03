@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-const READY_TIMEOUT_MS = 5_000;
+const READY_TIMEOUT_MS = 15_000;
 const UNIX_HOLDER_SCRIPT = "process.stdout.write('ready\\n'); process.stdin.resume(); process.stdin.once('end', () => process.exit(0));";
 const WINDOWS_HOLDER_SCRIPT = String.raw`
 $ErrorActionPreference = "Stop"

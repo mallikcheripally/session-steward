@@ -726,10 +726,10 @@ test("MCP does not restore over a Codex session that becomes active during backu
   });
 
   assert.equal(lockCreated, true);
-  await fs.access(path.join(locksDirectory, `${fixtureSessionIds.standalone}.lock`));
   assert.equal(result.isError, true, JSON.stringify(result));
   assert.match(result.content[0].text, /Quit ChatGPT or Codex completely/u);
   assert.equal(result.content[0].text.includes(fixture.codexHome), false);
+  await fs.access(path.join(locksDirectory, `${fixtureSessionIds.standalone}.lock`));
   assert.equal((await baseProvider.getSessionRecord({
     codexHome: fixture.codexHome,
     id: fixtureSessionIds.standalone,
