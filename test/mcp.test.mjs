@@ -23,6 +23,7 @@ import {
   fixtureSessionIds,
   removeCodexHomeFixture,
 } from "./fixtures/codex-home.mjs";
+import { holdFileLock } from "./fixtures/file-lock.mjs";
 
 const TOOL_NAMES = [
   "clean_sessions",
@@ -691,6 +692,7 @@ test("MCP does not restore over a Codex session that becomes active during backu
   const baseProvider = getProvider("codex");
   const locksDirectory = path.join(fixture.codexHome, "thread-writer-locks");
   let lockCreated = false;
+  let lockHolder = null;
   const provider = {
     ...baseProvider,
     executeSessionDeletion: (args) => baseProvider.executeSessionDeletion({
@@ -699,7 +701,7 @@ test("MCP does not restore over a Codex session that becomes active during backu
         if (!lockCreated && update.phase === "backup") {
           lockCreated = true;
           await fs.mkdir(locksDirectory, { recursive: true });
-          await fs.writeFile(path.join(locksDirectory, `${fixtureSessionIds.standalone}.lock`), "");
+          lockHolder = await holdFileLock(path.join(locksDirectory, `${fixtureSessionIds.standalone}.lock`));
         }
       },
     }),
@@ -710,6 +712,7 @@ test("MCP does not restore over a Codex session that becomes active during backu
   );
   context.after(async () => {
     await connection.close();
+    await lockHolder?.release();
     await removeCodexHomeFixture(fixture.codexHome);
   });
 
@@ -725,7 +728,7 @@ test("MCP does not restore over a Codex session that becomes active during backu
   assert.equal(lockCreated, true);
   await fs.access(path.join(locksDirectory, `${fixtureSessionIds.standalone}.lock`));
   assert.equal(result.isError, true, JSON.stringify(result));
-  assert.match(result.content[0].text, /Close the selected Codex session/u);
+  assert.match(result.content[0].text, /Quit ChatGPT or Codex completely/u);
   assert.equal(result.content[0].text.includes(fixture.codexHome), false);
   assert.equal((await baseProvider.getSessionRecord({
     codexHome: fixture.codexHome,

@@ -12,6 +12,7 @@ import {
   fixtureSessionIds,
   removeCodexHomeFixture,
 } from "../fixtures/codex-home.mjs";
+import { holdFileLock } from "../fixtures/file-lock.mjs";
 
 const codex = getProvider("codex");
 
@@ -479,12 +480,33 @@ test("Codex discloses retained session attachments", async (context) => {
   assert.equal((await codex.assertDeepCleanupSupported({ codexHome: fixture.codexHome })).status, "partial");
 });
 
-test("Codex cleanup stops while a selected session has a writer lock", async (context) => {
+test("Codex cleanup ignores an unlocked writer-lock file", async (context) => {
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
   const locksDirectory = path.join(fixture.codexHome, "thread-writer-locks");
   await mkdir(locksDirectory);
-  await writeFile(path.join(locksDirectory, `${fixtureSessionIds.parent}.lock`), "");
+  const lockPath = path.join(locksDirectory, `${fixtureSessionIds.parent}.lock`);
+  await writeFile(lockPath, "");
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.parent],
+  });
+  const plan = await codex.planSessionDeletion({ recordIds: [fixtureSessionIds.parent], store });
+
+  const preflight = await codex.preflightSessionDeletion({ plan, store });
+  assert.equal(preflight.activeThreadDetection, "writer-locks");
+  await access(lockPath);
+});
+
+test("Codex cleanup stops while a selected session holds its writer lock", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const locksDirectory = path.join(fixture.codexHome, "thread-writer-locks");
+  await mkdir(locksDirectory);
+  const holder = await holdFileLock(path.join(locksDirectory, `${fixtureSessionIds.parent}.lock`));
+  context.after(async () => {
+    await holder.release();
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
   const store = await codex.loadDeletionStore({
     codexHome: fixture.codexHome,
     recordIds: [fixtureSessionIds.parent],
@@ -494,7 +516,7 @@ test("Codex cleanup stops while a selected session has a writer lock", async (co
   await assert.rejects(
     codex.preflightSessionDeletion({ plan, store }),
     (error) => {
-      assert.match(error.message, /Close the selected Codex session/u);
+      assert.match(error.message, /Quit ChatGPT or Codex completely/u);
       assert.deepEqual(error.activeThreadIds, [fixtureSessionIds.parent]);
       return true;
     },

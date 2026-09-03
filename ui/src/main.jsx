@@ -565,6 +565,7 @@ function App() {
   const openDeleteDialog = async () => {
     try {
       setIsPlanning(true);
+      setError("");
       const nextScope = compatibility?.status === "unsupported" ? "core" : scope;
       if (await makePlan(nextScope)) setDialog(true);
     } finally {
