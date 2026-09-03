@@ -12,6 +12,7 @@ import {
   fixtureSessionIds,
   removeCodexHomeFixture,
 } from "../fixtures/codex-home.mjs";
+import { holdFileLock } from "../fixtures/file-lock.mjs";
 
 const codex = getProvider("codex");
 
@@ -121,6 +122,13 @@ test("Codex unions versioned stores, prefers the newest duplicate, and cleans ev
     for (const filename of [source, destination]) {
       assert.equal(queryRows(path.join(fixture.codexHome, filename), `select count(*) as count from ${table} where ${column} = ?`, [fixtureSessionIds.parent])[0].count, 0);
     }
+  }
+  for (const filename of ["thread_history_1.sqlite", "thread_history_2.sqlite"]) {
+    assert.equal(queryRows(
+      path.join(fixture.codexHome, filename),
+      "select count(*) as count from thread_realtime_items where thread_id = ?",
+      [fixtureSessionIds.parent],
+    )[0].count, 0);
   }
 });
 
@@ -479,12 +487,33 @@ test("Codex discloses retained session attachments", async (context) => {
   assert.equal((await codex.assertDeepCleanupSupported({ codexHome: fixture.codexHome })).status, "partial");
 });
 
-test("Codex cleanup stops while a selected session has a writer lock", async (context) => {
+test("Codex cleanup ignores an unlocked writer-lock file", async (context) => {
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
   const locksDirectory = path.join(fixture.codexHome, "thread-writer-locks");
   await mkdir(locksDirectory);
-  await writeFile(path.join(locksDirectory, `${fixtureSessionIds.parent}.lock`), "");
+  const lockPath = path.join(locksDirectory, `${fixtureSessionIds.parent}.lock`);
+  await writeFile(lockPath, "");
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.parent],
+  });
+  const plan = await codex.planSessionDeletion({ recordIds: [fixtureSessionIds.parent], store });
+
+  const preflight = await codex.preflightSessionDeletion({ plan, store });
+  assert.equal(preflight.activeThreadDetection, "writer-locks");
+  await access(lockPath);
+});
+
+test("Codex cleanup stops while a selected session holds its writer lock", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const locksDirectory = path.join(fixture.codexHome, "thread-writer-locks");
+  await mkdir(locksDirectory);
+  const holder = await holdFileLock(path.join(locksDirectory, `${fixtureSessionIds.parent}.lock`));
+  context.after(async () => {
+    await holder.release();
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
   const store = await codex.loadDeletionStore({
     codexHome: fixture.codexHome,
     recordIds: [fixtureSessionIds.parent],
@@ -494,7 +523,7 @@ test("Codex cleanup stops while a selected session has a writer lock", async (co
   await assert.rejects(
     codex.preflightSessionDeletion({ plan, store }),
     (error) => {
-      assert.match(error.message, /Close the selected Codex session/u);
+      assert.match(error.message, /Quit ChatGPT or Codex completely/u);
       assert.deepEqual(error.activeThreadIds, [fixtureSessionIds.parent]);
       return true;
     },
@@ -568,7 +597,7 @@ test("deep cleanup backs up, removes, and verifies only the selected family", as
   assert.equal(plan.dynamicToolRowCount, 2);
   assert.equal(plan.queueRowCount, 2);
   assert.equal(plan.queueRevisionRowCount, 2);
-  assert.equal(plan.threadHistoryRowCount, 6);
+  assert.equal(plan.threadHistoryRowCount, 8);
 
   const result = await codex.executeSessionDeletion({ plan, scope: "deep", store });
   const verification = await codex.verifySessionDeletion({ plan, scope: "deep", store });
@@ -586,7 +615,7 @@ test("deep cleanup backs up, removes, and verifies only the selected family", as
       .map(({ thread_id }) => ({ thread_id })),
     [{ thread_id: fixtureSessionIds.standalone }],
   );
-  for (const tableName of ["thread_items", "thread_turns", "thread_history_projection_state"]) {
+  for (const tableName of ["thread_items", "thread_turns", "thread_history_projection_state", "thread_realtime_items"]) {
     assert.deepEqual(
       queryRows(path.join(fixture.codexHome, "thread_history_1.sqlite"), `select thread_id from ${tableName} order by thread_id`)
         .map(({ thread_id }) => ({ thread_id })),
@@ -692,6 +721,79 @@ test("a cleanup backup can restore the selected session family", async (context)
   await access(fixture.transcripts.child);
   const restoredStore = await codex.loadSessionStore({ codexHome: fixture.codexHome });
   assert.deepEqual(new Set(restoredStore.records.map(({ id }) => id)), new Set(Object.values(fixtureSessionIds)));
+  assert.equal(
+    queryRows(
+      path.join(fixture.codexHome, "thread_history_1.sqlite"),
+      "select count(*) as count from thread_realtime_items where thread_id in (?, ?)",
+      [fixtureSessionIds.parent, fixtureSessionIds.child],
+    )[0].count,
+    2,
+  );
+});
+
+test("Codex cleanup supports older thread history without realtime items", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const database = new DatabaseSync(path.join(fixture.codexHome, "thread_history_1.sqlite"));
+  try {
+    database.exec("drop table thread_realtime_items");
+  } finally {
+    database.close();
+  }
+  codex.invalidateSessionCache({ codexHome: fixture.codexHome });
+  assert.equal((await codex.diagnoseStorageCompatibility({
+    codexHome: fixture.codexHome,
+  })).status, "ready");
+
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.standalone],
+  });
+  const plan = await codex.planSessionDeletion({
+    recordIds: [fixtureSessionIds.standalone],
+    store,
+  });
+  assert.equal(plan.threadHistoryRowCount, 3);
+
+  const result = await codex.executeSessionDeletion({ plan, scope: "deep", store });
+  assert.equal((await codex.verifySessionDeletion({ plan, scope: "deep", store })).complete, true);
+  await codex.restoreSessionDeletionBackup({
+    backupDirectory: result.backupDirectory,
+    codexHome: fixture.codexHome,
+  });
+  assert.equal(
+    queryRows(
+      path.join(fixture.codexHome, "thread_history_1.sqlite"),
+      "select count(*) as count from thread_items where thread_id = ?",
+      [fixtureSessionIds.standalone],
+    )[0].count,
+    1,
+  );
+});
+
+test("Codex rejects an incompatible realtime history table before thorough cleanup", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const database = new DatabaseSync(path.join(fixture.codexHome, "thread_history_1.sqlite"));
+  try {
+    database.exec("drop table thread_realtime_items; create table thread_realtime_items (item_id text)");
+  } finally {
+    database.close();
+  }
+  codex.invalidateSessionCache({ codexHome: fixture.codexHome });
+
+  const compatibility = await codex.diagnoseStorageCompatibility({
+    codexHome: fixture.codexHome,
+  });
+  assert.equal(compatibility.status, "unsupported");
+  assert.match(
+    compatibility.changed.join("\n"),
+    /Missing fields in thread_realtime_items: thread_id/u,
+  );
+  await assert.rejects(
+    codex.assertDeepCleanupSupported({ codexHome: fixture.codexHome }),
+    /storage layout is not supported/u,
+  );
 });
 
 test("Codex continues restoring version 2 recovery manifests", async (context) => {

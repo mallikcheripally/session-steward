@@ -1,6 +1,6 @@
 {
   "name": "session-steward",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Codex and Claude Code session manager - browse, back up, and delete old sessions. Local browser UI + CLI.",
   "license": "MIT",
   "author": "Mallik Cheripally",
