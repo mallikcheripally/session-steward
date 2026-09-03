@@ -5,16 +5,16 @@ const UNIX_HOLDER_SCRIPT = "process.stdout.write('ready\\n'); process.stdin.resu
 const WINDOWS_HOLDER_SCRIPT = String.raw`
 $ErrorActionPreference = "Stop"
 $stream = [System.IO.File]::Open(
-  $args[0],
+  $env:SESSION_STEWARD_TEST_LOCK_PATH,
   [System.IO.FileMode]::OpenOrCreate,
   [System.IO.FileAccess]::ReadWrite,
   ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
 )
-$stream.Lock(0, [long]::MaxValue)
+$stream.Lock(0, 1)
 [Console]::Out.WriteLine("ready")
 [Console]::Out.Flush()
 [Console]::In.ReadLine()
-$stream.Unlock(0, [long]::MaxValue)
+$stream.Unlock(0, 1)
 $stream.Dispose()
 `;
 
@@ -54,7 +54,7 @@ export async function holdFileLock(filePath) {
 
   if (process.platform === "win32") {
     command = "powershell.exe";
-    args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_HOLDER_SCRIPT, filePath];
+    args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_HOLDER_SCRIPT];
   } else if (process.platform === "darwin") {
     command = "/usr/bin/lockf";
     args = ["-ks", filePath, process.execPath, "-e", UNIX_HOLDER_SCRIPT];
@@ -64,6 +64,9 @@ export async function holdFileLock(filePath) {
   }
 
   const child = spawn(command, args, {
+    env: process.platform === "win32"
+      ? { ...process.env, SESSION_STEWARD_TEST_LOCK_PATH: filePath }
+      : process.env,
     stdio: ["pipe", "pipe", "ignore"],
     windowsHide: true,
   });
