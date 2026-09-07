@@ -3,6 +3,7 @@ import { access, appendFile, copyFile, mkdir, readFile, rm, stat, writeFile } fr
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import test from "node:test";
+import { zstdCompressSync } from "node:zlib";
 
 import { getProvider, listProviders } from "../../lib/providers/index.mjs";
 import { queryRows } from "../../lib/storage/sqlite.mjs";
@@ -402,6 +403,126 @@ test("Codex cleanup backs up and removes archived transcripts", async (context) 
     "transcripts",
     path.basename(fixture.transcripts.standalone),
   ));
+});
+
+test("Codex cleanup includes replacement and compressed rollouts and restores them", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const replacementId = "44444444-4444-4444-8444-444444444444";
+  const compressedId = "55555555-5555-4555-8555-555555555555";
+  const replacementPath = path.join(
+    fixture.codexHome,
+    "sessions",
+    `rollout-replacement-${replacementId}.jsonl`,
+  );
+  const compressedPath = path.join(
+    fixture.codexHome,
+    "archived_sessions",
+    `rollout-replacement-${compressedId}.jsonl.zst`,
+  );
+  const compressedSiblingPath = `${fixture.transcripts.parent}.zst`;
+  const header = (rolloutId) => `${JSON.stringify({
+    type: "session_meta",
+    payload: {
+      cwd: fixture.workspace,
+      history_base: { thread_id: rolloutId },
+      id: fixtureSessionIds.parent,
+      timestamp: "2026-07-02T10:00:00.000Z",
+    },
+  })}\n`;
+  await writeFile(replacementPath, header(fixtureSessionIds.parent));
+  await writeFile(compressedPath, zstdCompressSync(Buffer.from(header(replacementId))));
+  await writeFile(compressedSiblingPath, "compressed sibling");
+  const threadHistoryDatabasePath = path.join(fixture.codexHome, "thread_history_1.sqlite");
+  const threadHistoryDatabase = new DatabaseSync(threadHistoryDatabasePath);
+  try {
+    const insert = threadHistoryDatabase.prepare(
+      "insert into thread_history_projection_state values (?, 0, 0)",
+    );
+    insert.run(replacementId);
+    insert.run(compressedId);
+  } finally {
+    threadHistoryDatabase.close();
+  }
+
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.parent],
+  });
+  const plan = await codex.planSessionDeletion({
+    recordIds: [fixtureSessionIds.parent],
+    store,
+  });
+  const expectedPaths = [
+    fixture.transcripts.child,
+    fixture.transcripts.parent,
+    compressedPath,
+    compressedSiblingPath,
+    replacementPath,
+  ];
+  const expectedBytes = (await Promise.all(expectedPaths.map((filePath) => stat(filePath))))
+    .reduce((total, stats) => total + stats.size, 0);
+
+  assert.deepEqual(new Set(plan.transcriptPaths), new Set(expectedPaths));
+  assert.equal(plan.threadHistoryIds.includes(replacementId), true);
+  assert.equal(plan.threadHistoryIds.includes(compressedId), true);
+  assert.equal(plan.transcriptFileCount, expectedPaths.length);
+  assert.equal(plan.transcriptBytes, expectedBytes);
+
+  const result = await codex.executeSessionDeletion({ plan, scope: "core", store });
+  assert.equal((await codex.verifySessionDeletion({ plan, scope: "core", store })).complete, true);
+  for (const filePath of expectedPaths) {
+    await assert.rejects(access(filePath), { code: "ENOENT" });
+  }
+  assert.equal(queryRows(
+    threadHistoryDatabasePath,
+    "select count(*) as count from thread_history_projection_state where thread_id in (?, ?)",
+    [replacementId, compressedId],
+  )[0].count, 0);
+
+  await codex.restoreSessionDeletionBackup({
+    backupDirectory: result.backupDirectory,
+    codexHome: fixture.codexHome,
+  });
+  for (const filePath of expectedPaths) {
+    await access(filePath);
+  }
+  assert.equal(queryRows(
+    threadHistoryDatabasePath,
+    "select count(*) as count from thread_history_projection_state where thread_id in (?, ?)",
+    [replacementId, compressedId],
+  )[0].count, 2);
+});
+
+test("Codex cleanup keeps rollout history referenced by an unselected session", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const externalRolloutId = "66666666-6666-4666-8666-666666666666";
+  const externalPath = path.join(
+    fixture.codexHome,
+    "archived_sessions",
+    `rollout-external-${externalRolloutId}.jsonl`,
+  );
+  await writeFile(externalPath, `${JSON.stringify({
+    type: "session_meta",
+    payload: {
+      cwd: fixture.workspace,
+      history_base: { thread_id: fixtureSessionIds.parent },
+      id: fixtureSessionIds.standalone,
+      timestamp: "2026-07-02T10:00:00.000Z",
+    },
+  })}\n`);
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.parent],
+  });
+
+  await assert.rejects(
+    codex.planSessionDeletion({ recordIds: [fixtureSessionIds.parent], store }),
+    (error) => error?.code === "CODEX_EXTERNAL_ROLLOUT_REFERENCE",
+  );
+  await access(fixture.transcripts.parent);
+  await access(externalPath);
 });
 
 test("Codex plans cascade from parent to child but not child to parent", async (context) => {
