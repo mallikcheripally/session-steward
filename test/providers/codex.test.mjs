@@ -3,6 +3,7 @@ import { access, appendFile, copyFile, mkdir, readFile, rm, stat, writeFile } fr
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import test from "node:test";
+import { zstdCompressSync } from "node:zlib";
 
 import { getProvider, listProviders } from "../../lib/providers/index.mjs";
 import { queryRows } from "../../lib/storage/sqlite.mjs";
@@ -404,6 +405,126 @@ test("Codex cleanup backs up and removes archived transcripts", async (context) 
   ));
 });
 
+test("Codex cleanup includes replacement and compressed rollouts and restores them", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const replacementId = "44444444-4444-4444-8444-444444444444";
+  const compressedId = "55555555-5555-4555-8555-555555555555";
+  const replacementPath = path.join(
+    fixture.codexHome,
+    "sessions",
+    `rollout-replacement-${replacementId}.jsonl`,
+  );
+  const compressedPath = path.join(
+    fixture.codexHome,
+    "archived_sessions",
+    `rollout-replacement-${compressedId}.jsonl.zst`,
+  );
+  const compressedSiblingPath = `${fixture.transcripts.parent}.zst`;
+  const header = (rolloutId) => `${JSON.stringify({
+    type: "session_meta",
+    payload: {
+      cwd: fixture.workspace,
+      history_base: { thread_id: rolloutId },
+      id: fixtureSessionIds.parent,
+      timestamp: "2026-07-02T10:00:00.000Z",
+    },
+  })}\n`;
+  await writeFile(replacementPath, header(fixtureSessionIds.parent));
+  await writeFile(compressedPath, zstdCompressSync(Buffer.from(header(replacementId))));
+  await writeFile(compressedSiblingPath, "compressed sibling");
+  const threadHistoryDatabasePath = path.join(fixture.codexHome, "thread_history_1.sqlite");
+  const threadHistoryDatabase = new DatabaseSync(threadHistoryDatabasePath);
+  try {
+    const insert = threadHistoryDatabase.prepare(
+      "insert into thread_history_projection_state values (?, 0, 0)",
+    );
+    insert.run(replacementId);
+    insert.run(compressedId);
+  } finally {
+    threadHistoryDatabase.close();
+  }
+
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.parent],
+  });
+  const plan = await codex.planSessionDeletion({
+    recordIds: [fixtureSessionIds.parent],
+    store,
+  });
+  const expectedPaths = [
+    fixture.transcripts.child,
+    fixture.transcripts.parent,
+    compressedPath,
+    compressedSiblingPath,
+    replacementPath,
+  ];
+  const expectedBytes = (await Promise.all(expectedPaths.map((filePath) => stat(filePath))))
+    .reduce((total, stats) => total + stats.size, 0);
+
+  assert.deepEqual(new Set(plan.transcriptPaths), new Set(expectedPaths));
+  assert.equal(plan.threadHistoryIds.includes(replacementId), true);
+  assert.equal(plan.threadHistoryIds.includes(compressedId), true);
+  assert.equal(plan.transcriptFileCount, expectedPaths.length);
+  assert.equal(plan.transcriptBytes, expectedBytes);
+
+  const result = await codex.executeSessionDeletion({ plan, scope: "core", store });
+  assert.equal((await codex.verifySessionDeletion({ plan, scope: "core", store })).complete, true);
+  for (const filePath of expectedPaths) {
+    await assert.rejects(access(filePath), { code: "ENOENT" });
+  }
+  assert.equal(queryRows(
+    threadHistoryDatabasePath,
+    "select count(*) as count from thread_history_projection_state where thread_id in (?, ?)",
+    [replacementId, compressedId],
+  )[0].count, 0);
+
+  await codex.restoreSessionDeletionBackup({
+    backupDirectory: result.backupDirectory,
+    codexHome: fixture.codexHome,
+  });
+  for (const filePath of expectedPaths) {
+    await access(filePath);
+  }
+  assert.equal(queryRows(
+    threadHistoryDatabasePath,
+    "select count(*) as count from thread_history_projection_state where thread_id in (?, ?)",
+    [replacementId, compressedId],
+  )[0].count, 2);
+});
+
+test("Codex cleanup keeps rollout history referenced by an unselected session", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const externalRolloutId = "66666666-6666-4666-8666-666666666666";
+  const externalPath = path.join(
+    fixture.codexHome,
+    "archived_sessions",
+    `rollout-external-${externalRolloutId}.jsonl`,
+  );
+  await writeFile(externalPath, `${JSON.stringify({
+    type: "session_meta",
+    payload: {
+      cwd: fixture.workspace,
+      history_base: { thread_id: fixtureSessionIds.parent },
+      id: fixtureSessionIds.standalone,
+      timestamp: "2026-07-02T10:00:00.000Z",
+    },
+  })}\n`);
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.parent],
+  });
+
+  await assert.rejects(
+    codex.planSessionDeletion({ recordIds: [fixtureSessionIds.parent], store }),
+    (error) => error?.code === "CODEX_EXTERNAL_ROLLOUT_REFERENCE",
+  );
+  await access(fixture.transcripts.parent);
+  await access(externalPath);
+});
+
 test("Codex plans cascade from parent to child but not child to parent", async (context) => {
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
@@ -658,6 +779,100 @@ test("deep cleanup backs up, removes, and verifies only the selected family", as
     codexHome: fixture.codexHome,
   });
   await assert.rejects(access(result.backupDirectory), { code: "ENOENT" });
+});
+
+test("deep cleanup removes memory jobs and queues forgetting for selected memory", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const memoryDatabasePath = path.join(fixture.codexHome, "memories_1.sqlite");
+  await rm(memoryDatabasePath);
+  const database = new DatabaseSync(memoryDatabasePath);
+  try {
+    database.exec(`
+      create table stage1_outputs (
+        thread_id text primary key,
+        output text,
+        selected_for_phase2 integer not null default 0
+      );
+      create table jobs (
+        kind text not null,
+        job_key text not null,
+        status text not null,
+        worker_id text,
+        ownership_token text,
+        started_at integer,
+        finished_at integer,
+        lease_until integer,
+        retry_at integer,
+        retry_remaining integer not null,
+        last_error text,
+        input_watermark integer,
+        last_success_watermark integer,
+        primary key (kind, job_key)
+      );
+      insert into stage1_outputs values
+        ('${fixtureSessionIds.parent}', 'parent memory', 1),
+        ('${fixtureSessionIds.child}', 'child memory', 0),
+        ('${fixtureSessionIds.standalone}', 'standalone memory', 0);
+      insert into jobs (
+        kind, job_key, status, retry_remaining, input_watermark, last_success_watermark
+      ) values
+        ('memory_stage1', '${fixtureSessionIds.parent}', 'pending', 2, 10, 5),
+        ('memory_stage1', '${fixtureSessionIds.child}', 'done', 3, 20, 20),
+        ('memory_stage1', '${fixtureSessionIds.standalone}', 'done', 3, 30, 30),
+        ('memory_consolidate_global', 'global', 'done', 1, 100, 100);
+    `);
+  } finally {
+    database.close();
+  }
+  codex.invalidateSessionCache({ codexHome: fixture.codexHome });
+
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.parent],
+  });
+  const plan = await codex.planSessionDeletion({
+    recordIds: [fixtureSessionIds.parent],
+    store,
+  });
+  assert.equal(plan.memoryOutputRowCount, 2);
+  assert.equal(plan.memoryJobRowCount, 2);
+  assert.equal(plan.memoryRowCount, 4);
+  assert.deepEqual(plan.memoryConsolidations, [{
+    databasePath: memoryDatabasePath,
+    inputWatermark: 100,
+  }]);
+
+  const result = await codex.executeSessionDeletion({ plan, scope: "deep", store });
+  assert.equal((await codex.verifySessionDeletion({ plan, scope: "deep", store })).complete, true);
+  assert.equal(queryRows(
+    memoryDatabasePath,
+    "select count(*) as count from stage1_outputs where thread_id in (?, ?)",
+    [fixtureSessionIds.parent, fixtureSessionIds.child],
+  )[0].count, 0);
+  assert.equal(queryRows(
+    memoryDatabasePath,
+    "select count(*) as count from jobs where kind = 'memory_stage1' and job_key in (?, ?)",
+    [fixtureSessionIds.parent, fixtureSessionIds.child],
+  )[0].count, 0);
+  const globalJob = queryRows(
+    memoryDatabasePath,
+    "select status, retry_remaining, input_watermark from jobs where kind = 'memory_consolidate_global' and job_key = 'global'",
+  )[0];
+  assert.equal(globalJob.status, "pending");
+  assert.equal(globalJob.retry_remaining, 3);
+  assert.equal(globalJob.input_watermark > 100, true);
+
+  await codex.restoreSessionDeletionBackup({
+    backupDirectory: result.backupDirectory,
+    codexHome: fixture.codexHome,
+  });
+  assert.equal(queryRows(memoryDatabasePath, "select count(*) as count from stage1_outputs")[0].count, 3);
+  assert.equal(queryRows(memoryDatabasePath, "select count(*) as count from jobs")[0].count, 4);
+  assert.deepEqual({ ...queryRows(
+    memoryDatabasePath,
+    "select status, retry_remaining, input_watermark from jobs where kind = 'memory_consolidate_global' and job_key = 'global'",
+  )[0] }, { input_watermark: 100, retry_remaining: 1, status: "done" });
 });
 
 test("cleanup cancellation stops at a safe boundary", async (context) => {
