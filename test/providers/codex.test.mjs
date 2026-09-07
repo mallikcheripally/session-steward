@@ -781,6 +781,100 @@ test("deep cleanup backs up, removes, and verifies only the selected family", as
   await assert.rejects(access(result.backupDirectory), { code: "ENOENT" });
 });
 
+test("deep cleanup removes memory jobs and queues forgetting for selected memory", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const memoryDatabasePath = path.join(fixture.codexHome, "memories_1.sqlite");
+  await rm(memoryDatabasePath);
+  const database = new DatabaseSync(memoryDatabasePath);
+  try {
+    database.exec(`
+      create table stage1_outputs (
+        thread_id text primary key,
+        output text,
+        selected_for_phase2 integer not null default 0
+      );
+      create table jobs (
+        kind text not null,
+        job_key text not null,
+        status text not null,
+        worker_id text,
+        ownership_token text,
+        started_at integer,
+        finished_at integer,
+        lease_until integer,
+        retry_at integer,
+        retry_remaining integer not null,
+        last_error text,
+        input_watermark integer,
+        last_success_watermark integer,
+        primary key (kind, job_key)
+      );
+      insert into stage1_outputs values
+        ('${fixtureSessionIds.parent}', 'parent memory', 1),
+        ('${fixtureSessionIds.child}', 'child memory', 0),
+        ('${fixtureSessionIds.standalone}', 'standalone memory', 0);
+      insert into jobs (
+        kind, job_key, status, retry_remaining, input_watermark, last_success_watermark
+      ) values
+        ('memory_stage1', '${fixtureSessionIds.parent}', 'pending', 2, 10, 5),
+        ('memory_stage1', '${fixtureSessionIds.child}', 'done', 3, 20, 20),
+        ('memory_stage1', '${fixtureSessionIds.standalone}', 'done', 3, 30, 30),
+        ('memory_consolidate_global', 'global', 'done', 1, 100, 100);
+    `);
+  } finally {
+    database.close();
+  }
+  codex.invalidateSessionCache({ codexHome: fixture.codexHome });
+
+  const store = await codex.loadDeletionStore({
+    codexHome: fixture.codexHome,
+    recordIds: [fixtureSessionIds.parent],
+  });
+  const plan = await codex.planSessionDeletion({
+    recordIds: [fixtureSessionIds.parent],
+    store,
+  });
+  assert.equal(plan.memoryOutputRowCount, 2);
+  assert.equal(plan.memoryJobRowCount, 2);
+  assert.equal(plan.memoryRowCount, 4);
+  assert.deepEqual(plan.memoryConsolidations, [{
+    databasePath: memoryDatabasePath,
+    inputWatermark: 100,
+  }]);
+
+  const result = await codex.executeSessionDeletion({ plan, scope: "deep", store });
+  assert.equal((await codex.verifySessionDeletion({ plan, scope: "deep", store })).complete, true);
+  assert.equal(queryRows(
+    memoryDatabasePath,
+    "select count(*) as count from stage1_outputs where thread_id in (?, ?)",
+    [fixtureSessionIds.parent, fixtureSessionIds.child],
+  )[0].count, 0);
+  assert.equal(queryRows(
+    memoryDatabasePath,
+    "select count(*) as count from jobs where kind = 'memory_stage1' and job_key in (?, ?)",
+    [fixtureSessionIds.parent, fixtureSessionIds.child],
+  )[0].count, 0);
+  const globalJob = queryRows(
+    memoryDatabasePath,
+    "select status, retry_remaining, input_watermark from jobs where kind = 'memory_consolidate_global' and job_key = 'global'",
+  )[0];
+  assert.equal(globalJob.status, "pending");
+  assert.equal(globalJob.retry_remaining, 3);
+  assert.equal(globalJob.input_watermark > 100, true);
+
+  await codex.restoreSessionDeletionBackup({
+    backupDirectory: result.backupDirectory,
+    codexHome: fixture.codexHome,
+  });
+  assert.equal(queryRows(memoryDatabasePath, "select count(*) as count from stage1_outputs")[0].count, 3);
+  assert.equal(queryRows(memoryDatabasePath, "select count(*) as count from jobs")[0].count, 4);
+  assert.deepEqual({ ...queryRows(
+    memoryDatabasePath,
+    "select status, retry_remaining, input_watermark from jobs where kind = 'memory_consolidate_global' and job_key = 'global'",
+  )[0] }, { input_watermark: 100, retry_remaining: 1, status: "done" });
+});
+
 test("cleanup cancellation stops at a safe boundary", async (context) => {
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
