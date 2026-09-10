@@ -33,13 +33,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests
-        # Native Windows lock/process tests launch PowerShell; bound simultaneous
-        # test files so cold starts do not starve each other's safety timeouts.
-        run: npm test ${{ runner.os == 'Windows' && '-- --test-concurrency=2' || '' }}
-
       - name: Build production files
         run: npm run build
+
+      - name: Run tests
+        if: runner.os != 'Windows'
+        run: npm test
+
+      - name: Run Windows tests
+        if: runner.os == 'Windows'
+        # Put Node options before file patterns. Limit simultaneous PowerShell
+        # cold starts without disabling any native lock/process tests.
+        run: node --test --test-concurrency=2 test/*.test.mjs test/providers/*.test.mjs
 
       - name: Inspect package contents
         run: npm pack --dry-run
