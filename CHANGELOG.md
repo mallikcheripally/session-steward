@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.3] - 2026-09-10
+
+### Fixed
+
+- Deleted Codex sessions no longer linger in the ChatGPT sidebar.
+- Claude cleanup now handles stale session markers, protects shared history, and removes leftover session files.
+
 ## [0.10.2] - 2026-09-07
 
 ### Fixed
@@ -155,6 +162,7 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.10.3]: https://github.com/mallikcheripally/session-steward/compare/v0.10.2...v0.10.3
 [0.10.2]: https://github.com/mallikcheripally/session-steward/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/mallikcheripally/session-steward/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/mallikcheripally/session-steward/compare/v0.9.0...v0.10.0

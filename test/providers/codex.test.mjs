@@ -25,6 +25,10 @@ for (const layout of ["state_5", "state_6"]) {
     assert.equal(compatibility.status, "ready");
     assert.equal(compatibility.builtFor.codexCli.includes("0.148.0"), true);
     assert.equal(compatibility.builtFor.chatgptDesktop.includes("26.825.41651"), true);
+    assert.equal(compatibility.builtFor.codexCli.includes("0.153.4"), true);
+    assert.equal(compatibility.builtFor.codexCli.includes("0.154.0"), true);
+    assert.equal(compatibility.builtFor.chatgptDesktop.includes("26.903.61454"), true);
+    assert.equal(compatibility.builtFor.chatgptDesktop.includes("26.903.71938"), true);
     assert.equal(compatibility.resolvedDatabases.state.primary.filename, `${layout}.sqlite`);
     const listed = await codex.listSessions({
       codexHome: fixture.codexHome,
