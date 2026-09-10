@@ -34,7 +34,9 @@ jobs:
         run: npm ci
 
       - name: Run tests
-        run: npm test
+        # Native Windows lock/process tests launch PowerShell; bound simultaneous
+        # test files so cold starts do not starve each other's safety timeouts.
+        run: npm test ${{ runner.os == 'Windows' && '-- --test-concurrency=2' || '' }}
 
       - name: Build production files
         run: npm run build

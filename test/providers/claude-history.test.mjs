@@ -28,14 +28,16 @@ async function historyWriter(context, historyPath, sessionId) {
     import lockfile from ${JSON.stringify(import.meta.resolve("proper-lockfile"))};
     process.on('message', async () => {
       let release;
+      let reply;
       try {
         release = await lockfile.lock(process.argv[1], { stale: 10000, retries: 0 });
         await fs.appendFile(process.argv[1], JSON.stringify({
           sessionId: process.argv[2], display: 'concurrent unrelated prompt', timestamp: 42,
         }) + '\\n');
-        process.send('written');
-      } catch (error) { process.send(error.code ?? error.message); }
+        reply = 'written';
+      } catch (error) { reply = error.code ?? error.message; }
       finally { await release?.(); }
+      process.send(reply);
     });
     process.send('ready');
   `, historyPath, sessionId], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
