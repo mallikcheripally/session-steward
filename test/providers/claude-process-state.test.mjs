@@ -59,7 +59,7 @@ test("process start commands are bounded and use Claude's locale and timezone", 
     let called = false;
     const result = await readClaudeProcessStart(123, { platform, run: async (command, args, options) => {
       called = true;
-      assert.equal(options.timeout, 1000);
+      assert.equal(options.timeout, platform === "win32" ? 10_000 : 1_000);
       assert.equal(options.maxBuffer, 4096);
       assert.equal(options.env.LC_ALL, "C");
       assert.equal(options.env.TZ, "UTC");

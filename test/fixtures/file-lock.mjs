@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 
-const READY_TIMEOUT_MS = 15_000;
+// Concurrent Windows tests can spend longer starting PowerShell than acquiring the lock.
+const READY_TIMEOUT_MS = process.platform === "win32" ? 60_000 : 15_000;
 const UNIX_HOLDER_SCRIPT = "process.stdout.write('ready\\n'); process.stdin.resume(); process.stdin.once('end', () => process.exit(0));";
 const WINDOWS_HOLDER_SCRIPT = String.raw`
 $ErrorActionPreference = "Stop"
