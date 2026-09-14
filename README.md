@@ -4,355 +4,210 @@
 [![Build status](https://img.shields.io/github/actions/workflow/status/mallikcheripally/session-steward/validate.yml?branch=main&style=flat-square&label=build)](https://github.com/mallikcheripally/session-steward/actions/workflows/validate.yml)
 [![License: MIT](https://img.shields.io/npm/l/session-steward?style=flat-square)](https://github.com/mallikcheripally/session-steward/blob/main/LICENSE)
 
-A local Codex and Claude Code session manager for safely reviewing, backing up, and deleting old sessions from a browser UI or terminal CLI, or through MCP with ChatGPT or Claude.
+Session Steward is a local session manager for Codex and Claude Code. It helps you find old or large sessions across workspaces, decide what is worth keeping, and clean up the related records it recognizes. You can use it with browser UI or terminal CLI, or through MCP with ChatGPT or Claude.
 
-AI coding tools can accumulate hundreds or thousands of local sessions. A session may leave behind transcripts, history, logs, checkpoints, and linked artifacts, so manual cleanup can easily miss related data.
+Codex can delete a session, and Claude Code can purge a project. Built-in deletion works when you already know what should go. Session Steward helps when the hard part is reviewing many sessions across both tools.
 
-Session Steward makes session cleanup safer by finding those records, showing what cleanup will affect, creating a local backup, removing supported data, and verifying the result afterward. Session Steward runs locally.
+- Find inactive or large sessions across workspaces. Switch between Codex and Claude Code, then filter by archive status, name, or session ID.
+- Open a session before deciding. See a distilled timeline of recent messages, file changes, commands, and command results, plus recognized storage and token use.
+- Clean selected sessions using a plan you review first, with a local backup, verification afterward, and recovery when cleanup needs attention.
 
-![Session Steward cleanup demo](https://raw.githubusercontent.com/mallikcheripally/session-steward/main/docs/session-steward-demo.gif)
+## Try Session Steward locally
 
-## Manage local Codex and Claude Code sessions
+Try the browser app for one run without installing it globally:
 
-- Review and clean up sessions from the browser, terminal, ChatGPT, or Claude through MCP.
-- Switch between Codex and Claude Code without installing another package.
-- See session counts and the storage used by recognized session files.
-- Find sessions inactive for 30, 60, or 90 days.
-- Filter active or archived sessions by workspace, name, or session ID.
-- Mark important sessions or workspaces Keep so cleanup skips them.
-- Inspect session details and affected records before deletion.
-- Read a session timeline of what you asked, what changed, and which commands ran.
-- See how many tokens a session used, split into fresh input, cached input, cache writes, and output.
-- Choose standard or thorough cleanup.
-- Use custom Codex or Claude home folders across browser and terminal sessions.
-
-## Safe by default
-
-- Cleanup happens entirely on your computer.
-- Only records included in the reviewed cleanup plan are removed.
-- A local recovery backup is created before anything changes.
-- Cleanup is verified before the backup is removed.
-- Unrecognized storage is reported and left untouched.
-- Thorough cleanup is unavailable when the detected storage format is not supported.
-- Cleanup stays local and does not upload session contents.
-
-### Keep important sessions
-
-Mark a session or workspace Keep and Session Steward skips it during manual and scheduled cleanup. A workspace Keep also covers descendant folders and future sessions there.
-
-It protects against Session Steward cleanup only. Codex or Claude Code can still remove the data.
-
-### Session Steward does not remove
-
-- Sign-in data or saved API credentials
-- Configuration, plugins, caches, or custom prompt files
-- Project files, Git repositories, or worktrees
-- Sessions outside the reviewed cleanup plan
-- Conversations stored in your ChatGPT or Claude account
-- Claude Code worktrees, branches, repositories, remote sessions, SSH sessions, or Cowork data
-
-At startup, Session Steward may contact the public npm registry to check for a newer version.
-
-## Install and get started
-
-Session Steward supports macOS, Linux, and Windows and requires Node.js 24.15 or newer.
-
-Install it globally:
-
-```bash
-npm install --global session-steward
-```
-
-Then launch it:
-
-```bash
-session-steward
-```
-
-Or try it without installing:
+Session Steward requires Node.js 24.15 or newer.
 
 ```bash
 npx session-steward@latest
 ```
 
-Session Steward opens in your browser, listens only on `127.0.0.1`, and detects `~/.codex` and `~/.claude` by default. Claude Code CLI and local Claude Desktop sessions are detected on macOS and Windows; the Claude Code CLI is also supported on Linux. On Windows, these resolve to `%USERPROFILE%\.codex` and `%USERPROFILE%\.claude`.
+The browser app listens only on `127.0.0.1` and does not upload session contents.
 
-When run inside WSL, Session Steward uses the Linux home folder and manages sessions stored there. Run it from Windows to manage sessions in your Windows profile.
+![Session Steward cleanup demo](https://raw.githubusercontent.com/mallikcheripally/session-steward/main/docs/session-steward-demo.gif)
 
-To clean up sessions:
+For ongoing use, install it globally:
 
-1. Review the detected sessions.
-2. Select one or more sessions.
-3. Choose a cleanup option.
-4. Review exactly what will be removed.
-5. Close any selected sessions that may still be active.
-6. Confirm the cleanup.
+```bash
+npm install --global session-steward
+```
 
-Keep the terminal open while using Session Steward. Press `Ctrl+C` to stop it.
+The global install provides four commands:
 
-## Cleanup and recovery
+| Command | Use it for |
+| --- | --- |
+| `session-steward` | Browser interface |
+| `session-steward-cli` | Interactive terminal and JSON output |
+| `session-steward-mcp` | MCP session management |
+| `session-steward-scheduler` | Automatic session cleanup |
 
-### Standard cleanup
+Session Steward supports macOS, Linux, and Windows. Run `session-steward` to open the browser interface. Leave its terminal open while you use it; press `Ctrl+C` to stop it.
 
-Recommended for routine removal. It removes supported transcripts, history, registry entries, logs, and linked session artifacts belonging to the selected sessions.
+## Find old and large Codex and Claude Code sessions
 
-### Thorough cleanup
+Session Steward reads the local session folders already used by Codex and Claude Code. It looks for `~/.codex` and `~/.claude` by default and lets you switch providers from the same interface.
 
-Includes standard cleanup and removes additional recognized session-owned data. For Codex this can include supported Desktop references, memory outputs, and goal records. For Claude Code this includes recognized file checkpoints.
+You can:
 
-Thorough cleanup is unavailable when Session Steward finds storage it does not recognize. Standard cleanup remains available for supported records that can be identified safely.
+- filter by inactivity, exact workspace, active or archived status, name, or session ID;
+- see recognized session-owned storage by session and workspace, then sort by size;
+- browse session timeline of recent messages, file changes, commands, and command results;
+- inspect fresh input, cached input, cache writes, output, and recorded reasoning tokens;
+- mark a session or workspace **Keep** so manual and scheduled cleanup skip it.
 
-### Recovery backups
+A workspace Keep covers that folder, its descendants, and future sessions there. Keep affects Session Steward cleanup only. Codex or Claude Code can still remove their own data.
 
-A temporary backup is created inside the active provider folder under `session-steward-backups/`.
+## Why not just delete sessions one at a time?
 
-After cleanup is successfully verified, the backup is removed automatically. If cleanup fails, Session Steward keeps the backup and lets you restore the sessions, keep the backup, or delete it.
+The native delete commands are useful when you already know what should go. They do not cover the same cross-workspace review and cleanup job.
 
-Before restoring, the current versions of affected files are saved separately to provide another recovery point.
+A session can have more than its transcript. Depending on the provider and storage version, it may also have history or registry entries, logs, checkpoints, and other linked records. Removing a JSONL file by hand can leave those records behind.
 
-## Terminal CLI
+Session Steward starts from the session instead of a file path. It finds supported related records, shows them in one cleanup plan, and leaves storage it does not recognize alone. You can review several candidates together without treating every old session as safe to delete.
 
-Start the interactive terminal interface:
+## Use the browser, CLI, or MCP
+
+### Browser
+
+Run:
+
+```bash
+session-steward
+```
+
+Choose Codex or Claude Code, filter or search the list, and open sessions you are unsure about. When you select sessions for cleanup, the browser shows the affected records before asking for confirmation.
+
+Use `session-steward --no-open` to start without opening a browser automatically. Open the local address printed in the terminal.
+
+### Terminal CLI
+
+Start the interactive terminal:
 
 ```bash
 session-steward-cli
 ```
 
-Use Claude Code instead of Codex:
+Use Claude Code instead of Codex, or return a limited JSON result for another tool:
 
 ```bash
 session-steward-cli --provider claude-code
-```
-
-List sessions as JSON:
-
-```bash
 session-steward-cli --json --limit 10
 ```
 
-<details>
-<summary>More terminal options</summary>
+Filter with options such as `--inactive-days 60`, `--archive-status archived`, or `--workspace /path/to/project`. Use `--events` for the timeline, `--tokens` for token use, and `--sort size` for the largest sessions first. Run `session-steward-cli --help` for every option.
 
-Show session and workspace storage totals:
+### MCP with ChatGPT, Codex, or Claude Code
 
-```bash
-session-steward-cli --overview
-```
-
-Add `--json` when the output will be read by another tool.
-
-Find sessions inactive for at least 60 days:
-
-```bash
-session-steward-cli --inactive-days 60
-```
-
-Show only archived sessions:
-
-```bash
-session-steward-cli --archive-status archived
-```
-
-Show sessions from one exact workspace:
-
-```bash
-session-steward-cli --workspace /path/to/project
-```
-
-Use `--include-internals` to include subagents and `--include-supporting` to include supporting sessions. Session sizes are shown in the interactive list, and `--sort size` places the largest sessions first.
-
-Start with `--events` to read what happened inside a session — what you asked, what the assistant concluded, which files changed, and which commands ran or failed. In the interactive list, `inspect <number>` then shows that session's timeline:
-
-```bash
-session-steward-cli --events --events-limit 50
-```
-
-With `--json`, each session carries its own `events`, plus a `coverage` summary of how much of the transcript was recognized:
-
-```bash
-session-steward-cli --json --limit 5 --events
-```
-
-Use `--tokens` to count what a session spent. The total is split into fresh input, cached input, cache writes, and output, with reasoning reported as a share of output where the provider records it:
-
-```bash
-session-steward-cli --tokens
-```
-
-In the interactive list, `tokens` toggles the same breakdown into `inspect`. With `--json`, each session carries a `tokens` object:
-
-```bash
-session-steward-cli --json --limit 5 --tokens
-```
-
-Cached input usually dominates, because the whole conversation is re-sent on every turn. A forked session reports its own work separately from the tokens it inherited from the session it branched from, so the two are never added together.
-
-The interactive terminal accepts the same filters:
-
-```text
-inactive 30
-inactive 60
-inactive 90
-archive active
-archive archived
-workspace /path/to/project
-internals
-supporting
-tokens
-keep 3
-unkeep 3
-keep-workspace /path/to/project
-unkeep-workspace /path/to/project
-cleanup standard
-cleanup thorough
-overview
-backups
-```
-
-Run `inactive`, `archive`, or `workspace` without a value to clear that filter.
-
-`keep` and `unkeep` accept session selectors. `keep-workspace` and
-`unkeep-workspace` accept a full path.
-
-`backups` lists recovery backups retained after an interrupted or unsuccessful cleanup. Use `restore <number>` to restore one, or `delete-backup <number>` to remove it permanently. Both actions require an explicit confirmation.
-
-</details>
-
-Use `session-steward-cli --help` to see all available options.
-
-## Clean up sessions with ChatGPT or Claude
-
-Connect Session Steward once, then ask ChatGPT or Claude to find old or large
-sessions, delete them safely, restore a backup, or clean sessions automatically
-on a schedule.
-
-Connect it to ChatGPT and Codex:
+Connect the local MCP server once:
 
 ```bash
 codex mcp add session-steward -- session-steward-mcp
 ```
 
-Connect it to Claude Code:
+Or connect it to Claude Code:
 
 ```bash
 claude mcp add --scope user session-steward -- session-steward-mcp
 ```
 
-You can then ask things like:
+Registry installers can start the same server without a global install using `npx session-steward@latest mcp`.
 
-- “Find sessions I have not used in 60 days.”
-- “Show sessions from this workspace, largest first.”
-- “Delete those sessions.”
-- “Keep this session from Session Steward cleanup.”
-- “Keep every session in this workspace.”
-- “Every 12 days, delete sessions I have not used in 45 days.”
-- “Restore my latest backup.”
+You can then ask your client to find inactive sessions, compare recognized session storage between Codex and Claude Code, inspect a session, keep a workspace, clean exact sessions, restore a backup, or manage a cleanup schedule.
 
-Cleanup uses the same local backup and verification checks as the browser and
-terminal. Codex or Claude Code asks for approval before cleanup, restore, or
-schedule changes.
+Session Steward marks cleanup, restore, and schedule management as destructive MCP actions so the client can apply its configured approval policy.
 
-Scheduled cleanup continues in the background after you close Codex or Claude
-Code. You can ask to pause, resume, run, change, or remove a schedule. Before
-uninstalling Session Steward, stop scheduled cleanup:
+Scheduled cleanup continues in the background after you close the client. You can ask to pause, resume, run, change, or remove a schedule. Before uninstalling Session Steward, stop scheduled cleanup:
 
 ```bash
 session-steward-scheduler --stop
 ```
 
-Check or remove the MCP connection at any time:
+For another MCP client, configure a local stdio server named `session-steward` with the command `session-steward-mcp`.
 
-```bash
-codex mcp list
-codex mcp remove session-steward
+The MCP process uses Session Steward's saved provider folders or the defaults when none are saved. Its server command can set startup folders with `--codex-home` or `--claude-home`, and its `manage_settings` tool can change the saved folders. A one-time browser or CLI override does not carry into a later MCP process.
 
-claude mcp list
-claude mcp remove --scope user session-steward
-```
+The MCP server runs locally, but session details can contain messages, commands, file names, and workspace paths. Your MCP client may send that information to its AI provider.
 
-For another MCP client, add a local server named `session-steward`:
+## Review what will be deleted first
 
-```json
-{
-  "mcpServers": {
-    "session-steward": {
-      "command": "session-steward-mcp"
-    }
-  }
-}
-```
+For a manual cleanup:
 
-The MCP server uses the same provider folders selected in the browser or
-terminal.
+1. Select the sessions.
+2. Close any selected sessions that may still be active.
+3. Review the cleanup plan Session Steward builds.
+4. Confirm the plan.
+5. Session Steward creates a local recovery backup.
+6. It removes only supported records in the reviewed plan.
+7. It checks whether those records are gone.
 
-### Privacy
+Every interface revalidates the selected sessions before changing data. If Session Steward can detect that a selected session is active, preflight or cleanup stops. When detection is unavailable, it warns you to confirm that the selected sessions are closed.
 
-The MCP server runs locally. Session details can include messages, commands,
-file names, and workspace paths, and your MCP client may send that information
-to its AI provider.
+### Standard and thorough cleanup
 
-## Use a custom provider folder
+**Standard cleanup** removes supported transcripts, history, registry entries, logs, and linked artifacts belonging to the selected sessions. It is the routine option.
 
-The browser interface displays the active provider folder. Select **Change** to choose another existing folder and remember it for later browser and terminal sessions.
+**Thorough cleanup** also removes additional recognized session-owned data. For Codex, that can include supported Desktop references, memory outputs, and goal records. For Claude Code, it includes recognized file checkpoints.
 
-For a one-time override:
+Thorough cleanup is unavailable when the detected storage layout is not supported. Standard cleanup can still remove records that Session Steward can identify safely.
+
+<details>
+<summary>Backup and restore behavior</summary>
+
+Recovery backups are stored under `session-steward-backups/` inside the active provider folder.
+
+If cleanup from the browser or interactive terminal needs attention, the backup is kept until you decide whether to restore it. The browser offers **Restore**, and the terminal reports the backup for the `restore` command. MCP and scheduled cleanup try to restore automatically.
+
+After successful cleanup, Session Steward removes the recovery backup when it can. A restore first creates a temporary safety backup of the current files, then tries to remove both backups if the restore succeeds. If a restore or backup removal cannot complete, recovery data remains and Session Steward reports it.
+
+</details>
+
+### What cleanup leaves alone
+
+- Sign-in data and saved API credentials
+- Configuration, plugins, caches, and custom prompt files
+- Project files, Git repositories, and worktrees
+- Sessions outside the reviewed cleanup plan
+- Conversations stored in your ChatGPT or Claude account
+- Claude Code worktrees, branches, repositories, remote sessions, SSH sessions, and Cowork data
+
+## Provider folders and platform support
+
+The browser shows the active provider folder. Select **Change** to choose another existing folder and save it for later browser, terminal, and MCP sessions.
+
+For a one-time browser override:
 
 ```bash
 session-steward --codex-home /path/to/.codex
-```
-
-For Claude Code:
-
-```bash
 session-steward --claude-home /path/to/.claude
 ```
 
-The command-line override applies only to that run and does not replace your saved folder.
+The CLI and MCP commands accept the same flags. An override applies only to that process and does not replace the saved folder.
 
-## Other commands
+Codex and Claude Code CLI sessions are supported on macOS, Linux, and Windows. Local Claude Desktop sessions are also supported on macOS and Windows. On Windows, the default provider folders are `%USERPROFILE%\.codex` and `%USERPROFILE%\.claude`; both standalone and Microsoft Store Claude Desktop data locations are detected.
 
-Start without automatically opening the browser:
+Inside WSL, Session Steward uses the Linux home folder. Run it from Windows to manage sessions in your Windows profile.
 
-```bash
-session-steward --no-open
-```
+Archiving a Claude Desktop session does not delete it. It remains available until it is explicitly included in cleanup. Session Steward does not remove Claude worktrees.
 
-Update Session Steward:
+## Update or uninstall
 
 ```bash
 npm install --global session-steward@latest
-```
-
-Uninstall it:
-
-```bash
 npm uninstall --global session-steward
 ```
 
-Uninstalling Session Steward does not remove provider sessions, recovery backups, or saved folder preferences.
+Uninstalling does not remove provider sessions, recovery backups, or saved folder preferences.
 
 ## Troubleshooting
 
-- **The browser did not open:** Run `session-steward --no-open`, then open the local address shown in the terminal.
+- **The browser did not open:** Run `session-steward --no-open`, then open the local address printed in the terminal.
 - **No sessions were found:** Check the selected provider and displayed home folder. Use **Change** or pass a one-time home-folder override.
-- **Thorough cleanup is unavailable:** Review the compatibility details. Unrecognized storage is left untouched, but standard cleanup may still be available.
+- **Thorough cleanup is unavailable:** Unrecognized storage stays unchanged, while standard cleanup may still be available.
 - **Your Node.js version is too old:** Install Node.js 24.15 or newer and run Session Steward again.
 
-## Development
+## Benchmarks
 
-```bash
-git clone https://github.com/mallikcheripally/session-steward.git
-cd session-steward
-npm install
-npm test
-npm run build
-```
-
-## Performance and scale
-
-Session Steward uses paginated listings, incremental transcript reads, and bounded caches to remain responsive with large session libraries.
-
-Current synthetic benchmarks on an arm64 Mac with Node.js 24.15.0:
+Current benchmarks on an arm64 Mac with Node.js 24.15.0:
 
 | Scenario | Scale | Time | Measured memory growth |
 | --- | ---: | ---: | ---: |
@@ -374,11 +229,7 @@ Results vary with hardware, disk speed, and session layout. Tests and benchmarks
 
 ## Support
 
-Codex, Claude Code CLI, and local Claude Code Desktop sessions are supported. Claude Desktop archive is not treated as deletion, and Session Steward never removes its worktrees. On Windows, both the standalone and Microsoft Store Claude Desktop data locations are detected.
-
-Use [GitHub Issues](https://github.com/mallikcheripally/session-steward/issues) to report a bug, request a provider, or share a storage format that Session Steward does not recognize.
-
-See the [changelog](https://github.com/mallikcheripally/session-steward/blob/main/CHANGELOG.md) for published release history.
+Use [GitHub Issues](https://github.com/mallikcheripally/session-steward/issues) to report a bug, request a provider, or share a storage format that Session Steward does not recognize. See the [changelog](https://github.com/mallikcheripally/session-steward/blob/main/CHANGELOG.md) for release history.
 
 Session Steward is an independent project and is not affiliated with or endorsed by OpenAI or Anthropic.
 

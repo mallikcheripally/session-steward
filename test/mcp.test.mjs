@@ -845,57 +845,68 @@ test("MCP cancellation reaches long transcript reads", async (context) => {
   }
 });
 
-test("the MCP executable serves Codex and Claude Code over real stdio", async (context) => {
-  const codexFixture = await createCodexHomeFixture({ includeEventTranscript: true });
-  const claudeFixture = await createClaudeHomeFixture({ includeEventTranscript: true });
-  const isolatedHome = path.join(claudeFixture.root, "mcp-user-home");
-  await fs.mkdir(isolatedHome, { recursive: true });
-  const environment = {
-    ...getDefaultEnvironment(),
-    APPDATA: path.join(isolatedHome, "AppData", "Roaming"),
-    HOME: isolatedHome,
-    LOCALAPPDATA: path.join(isolatedHome, "AppData", "Local"),
-    USERPROFILE: isolatedHome,
-  };
-  const transport = new StdioClientTransport({
-    args: [
-      path.resolve("bin/session-steward-mcp.mjs"),
-      "--codex-home",
-      codexFixture.codexHome,
-      "--claude-home",
-      claudeFixture.claudeHome,
-    ],
-    command: process.execPath,
-    cwd: path.resolve("."),
-    env: environment,
-    stderr: "pipe",
-  });
-  const client = new Client({ name: "session-steward-stdio-test", version: "1.0.0" });
-  context.after(async () => {
-    await Promise.allSettled([client.close(), transport.close()]);
-    await Promise.all([
-      removeCodexHomeFixture(codexFixture.codexHome),
-      removeClaudeHomeFixture(claudeFixture),
-    ]);
-  });
+for (const executable of [
+  {
+    args: [path.resolve("bin/session-steward-mcp.mjs")],
+    label: "the dedicated MCP executable",
+  },
+  {
+    args: [path.resolve("bin/session-steward.mjs"), "mcp"],
+    label: "the package launcher MCP subcommand",
+  },
+]) {
+  test(`${executable.label} serves Codex and Claude Code over real stdio`, async (context) => {
+    const codexFixture = await createCodexHomeFixture({ includeEventTranscript: true });
+    const claudeFixture = await createClaudeHomeFixture({ includeEventTranscript: true });
+    const isolatedHome = path.join(claudeFixture.root, "mcp-user-home");
+    await fs.mkdir(isolatedHome, { recursive: true });
+    const environment = {
+      ...getDefaultEnvironment(),
+      APPDATA: path.join(isolatedHome, "AppData", "Roaming"),
+      HOME: isolatedHome,
+      LOCALAPPDATA: path.join(isolatedHome, "AppData", "Local"),
+      USERPROFILE: isolatedHome,
+    };
+    const transport = new StdioClientTransport({
+      args: [
+        ...executable.args,
+        "--codex-home",
+        codexFixture.codexHome,
+        "--claude-home",
+        claudeFixture.claudeHome,
+      ],
+      command: process.execPath,
+      cwd: path.resolve("."),
+      env: environment,
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "session-steward-stdio-test", version: "1.0.0" });
+    context.after(async () => {
+      await Promise.allSettled([client.close(), transport.close()]);
+      await Promise.all([
+        removeCodexHomeFixture(codexFixture.codexHome),
+        removeClaudeHomeFixture(claudeFixture),
+      ]);
+    });
 
-  await client.connect(transport);
-  assert.ok(transport.pid);
-  const listedTools = await client.listTools();
-  assert.deepEqual(listedTools.tools.map((tool) => tool.name).sort(), TOOL_NAMES);
+    await client.connect(transport);
+    assert.ok(transport.pid);
+    const listedTools = await client.listTools();
+    assert.deepEqual(listedTools.tools.map((tool) => tool.name).sort(), TOOL_NAMES);
 
-  const codex = await call(client, "inspect_session", {
-    id: fixtureSessionIds.parent,
-    provider: "codex",
-  });
-  assert.equal(codex.session.provider, "codex");
+    const codex = await call(client, "inspect_session", {
+      id: fixtureSessionIds.parent,
+      provider: "codex",
+    });
+    assert.equal(codex.session.provider, "codex");
 
-  const claude = await call(client, "inspect_session", {
-    id: claudeFixture.cliId,
-    provider: "claude-code",
+    const claude = await call(client, "inspect_session", {
+      id: claudeFixture.cliId,
+      provider: "claude-code",
+    });
+    assert.equal(claude.session.provider, "claude-code");
   });
-  assert.equal(claude.session.provider, "claude-code");
-});
+}
 
 test("Codex MCP reads stay bounded and leave provider files unchanged", async (context) => {
   const fixture = await createCodexHomeFixture({ includeEventTranscript: true });

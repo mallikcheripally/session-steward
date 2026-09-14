@@ -4,30 +4,38 @@ on:
   release:
     types:
       - published
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag whose MCP metadata should be published
+        required: true
+        type: string
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: publish-${{ github.event.release.tag_name }}
+  group: publish-${{ github.event.release.tag_name || inputs.release_tag }}
   cancel-in-progress: false
 
 jobs:
   publish:
-    if: ${{ !github.event.release.prerelease }}
+    if: ${{ github.event_name == 'release' && !github.event.release.prerelease }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out release
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ github.event.release.tag_name }}
+          ref: refs/tags/${{ github.event.release.tag_name }}
 
       - name: Confirm release source
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
+          git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"
+          test "$(git rev-list -n 1 "refs/tags/$RELEASE_TAG")" = "$(git rev-parse HEAD)"
           git merge-base --is-ancestor HEAD origin/main
           node --input-type=module -e '
             import packageJson from "./package.json" with { type: "json" };
@@ -51,5 +59,117 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Install MCP Registry publisher
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz \
+            --output mcp-publisher.tar.gz
+          echo "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  mcp-publisher.tar.gz" | sha256sum --check
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+
+      - name: Validate MCP Registry metadata
+        run: ./mcp-publisher validate server.json
+
       - name: Publish package
         run: npm publish
+
+  publish-mcp:
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && !github.event.release.prerelease && needs.publish.result == 'success')) }}
+    needs: publish
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: refs/tags/${{ github.event.release.tag_name || inputs.release_tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.15.0
+          package-manager-cache: false
+
+      - name: Confirm registry release source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: |
+          git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"
+          test "$(git rev-list -n 1 "refs/tags/$RELEASE_TAG")" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor HEAD origin/main
+          node --input-type=module -e '
+            import packageJson from "./package.json" with { type: "json" };
+            const expected = `v${packageJson.version}`;
+            if (process.env.RELEASE_TAG !== expected) {
+              console.error(`Release tag ${process.env.RELEASE_TAG} does not match ${expected}.`);
+              process.exit(1);
+            }
+          '
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            curl --fail --silent --show-error --location \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+              --output "$RUNNER_TEMP/release.json"
+            jq --exit-status '.draft == false and .prerelease == false' \
+              "$RUNNER_TEMP/release.json" > /dev/null
+          fi
+
+      - name: Install MCP Registry publisher
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz \
+            --output mcp-publisher.tar.gz
+          echo "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  mcp-publisher.tar.gz" | sha256sum --check
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish MCP server metadata
+        timeout-minutes: 10
+        run: |
+          server_name="$(jq --raw-output '.name' server.json)"
+          server_version="$(jq --raw-output '.version' server.json)"
+          encoded_name="$(jq --null-input --raw-output --arg value "$server_name" '$value | @uri')"
+          encoded_version="$(jq --null-input --raw-output --arg value "$server_version" '$value | @uri')"
+          version_url="https://registry.modelcontextprotocol.io/v0.1/servers/${encoded_name}/versions/${encoded_version}"
+          response_file="$RUNNER_TEMP/mcp-registry-version.json"
+
+          registry_has_exact_version() {
+            http_status="$(curl --silent --show-error --location \
+              --connect-timeout 5 --max-time 15 \
+              --output "$response_file" --write-out '%{http_code}' \
+              "$version_url")" || return 1
+            [ "$http_status" = "200" ] || return 1
+            jq --exit-status \
+              --arg name "$server_name" \
+              --arg version "$server_version" \
+              '.server.name == $name and .server.version == $version' \
+              "$response_file" > /dev/null
+          }
+
+          if registry_has_exact_version; then
+            echo "MCP Registry already contains $server_name version $server_version."
+            exit 0
+          fi
+
+          for attempt in 1 2 3 4 5; do
+            if timeout 60s ./mcp-publisher publish server.json; then
+              exit 0
+            fi
+            if registry_has_exact_version; then
+              echo "MCP Registry contains $server_name version $server_version after attempt $attempt."
+              exit 0
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              exit 1
+            fi
+            delay=$((attempt * 15))
+            echo "MCP Registry publish attempt $attempt failed; retrying in ${delay}s."
+            sleep "$delay"
+          done
