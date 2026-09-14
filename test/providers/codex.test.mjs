@@ -62,6 +62,23 @@ for (const layout of ["state_5", "state_6"]) {
   });
 }
 
+test("Codex filters records before pagination", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  context.after(() => removeCodexHomeFixture(fixture.codexHome));
+  const result = await codex.listSessions({
+    codexHome: fixture.codexHome,
+    includeInternals: true,
+    includeSupporting: true,
+    page: 1,
+    pageSize: 1,
+    recordFilter: ({ id }) => [fixtureSessionIds.parent, fixtureSessionIds.standalone].includes(id),
+  });
+
+  assert.equal(result.total, 2);
+  assert.equal(result.pageCount, 2);
+  assert.equal(result.records.length, 1);
+});
+
 test("Codex unions versioned stores, prefers the newest duplicate, and cleans every recognized store", async (context) => {
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));

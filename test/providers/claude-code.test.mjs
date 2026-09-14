@@ -36,6 +36,21 @@ for (const layout of ["current", "alternate"]) {
   });
 }
 
+test("Claude filters records before pagination", async (context) => {
+  const fixture = await createClaudeHomeFixture();
+  context.after(() => removeClaudeHomeFixture(fixture));
+  const result = await claude.listSessions({
+    ...fixture,
+    page: 1,
+    pageSize: 1,
+    recordFilter: ({ id }) => id !== fixture.cliId,
+  });
+
+  assert.equal(result.total, 2);
+  assert.equal(result.pageCount, 2);
+  assert.equal(result.records.length, 1);
+});
+
 test("Claude reports unknown locations as partial and leaves them untouched during thorough cleanup", async (context) => {
   const fixture = await createClaudeHomeFixture();
   context.after(() => removeClaudeHomeFixture(fixture));

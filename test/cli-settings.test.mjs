@@ -526,6 +526,32 @@ test("the interactive CLI defaults to thorough cleanup and removes verified back
   assert.deepEqual(await provider.listSessionDeletionBackups({ codexHome: fixture.codexHome }), []);
 });
 
+test("the interactive CLI keeps a session and cleanup skips it", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-keep-"));
+  context.after(async () => {
+    await Promise.all([
+      removeCodexHomeFixture(fixture.codexHome),
+      fs.rm(xdgConfigHome, { force: true, recursive: true }),
+    ]);
+  });
+  const selector = fixtureSessionIds.standalone.slice(0, 12);
+  const output = await runInteractiveCli(
+    ["--codex-home", fixture.codexHome],
+    [
+      { prompt: "session-steward> ", response: `keep ${selector}` },
+      { prompt: "session-steward> ", response: `delete ${selector}` },
+      { prompt: "Press Enter to continue...", response: "" },
+      { prompt: "session-steward> ", response: "quit" },
+    ],
+    xdgConfigHome,
+  );
+
+  assert.match(output, /Kept 1 session/u);
+  assert.match(output, /Nothing will be deleted/u);
+  assert.equal((await fs.stat(fixture.transcripts.standalone)).isFile(), true);
+});
+
 test("the interactive CLI respects a provider lock owned by another process", async (context) => {
   const fixture = await createCodexHomeFixture();
   const xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cli-lock-"));

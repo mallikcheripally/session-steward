@@ -37,13 +37,17 @@ Options:
     "../lib/cleanup-schedules.mjs"
   );
   const { createProviderSettings } = await import("../lib/settings.mjs");
+  const { createSessionProtectionStore } = await import("../lib/session-protections.mjs");
   const settings = await createProviderSettings({
     configDirectory: values["config-directory"],
   });
   const scheduleStore = createCleanupScheduleStore({
     configDirectory: settings.getConfigDirectory(),
   });
-  const results = await runDueCleanupSchedules({ scheduleStore, settings });
+  const protectionStore = createSessionProtectionStore({
+    configDirectory: settings.getConfigDirectory(),
+  });
+  const results = await runDueCleanupSchedules({ protectionStore, scheduleStore, settings });
   if (results.some((result) => ["failed", "recovery-failed"].includes(result.status))) {
     process.exitCode = 1;
   }

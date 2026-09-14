@@ -192,6 +192,10 @@ workspace /path/to/project
 internals
 supporting
 tokens
+keep 3
+unkeep 3
+keep-workspace /path/to/project
+unkeep-workspace /path/to/project
 cleanup standard
 cleanup thorough
 overview
@@ -199,6 +203,11 @@ backups
 ```
 
 Run `inactive`, `archive`, or `workspace` without a value to clear that filter.
+
+Use `keep <selector>` for one session or `keep-workspace <path>` for a workspace
+and its descendants. Kept sessions are skipped by manual and scheduled Session
+Steward cleanup. This does not stop Codex or Claude Code from removing their own
+session data. Use `unkeep` or `unkeep-workspace` to remove the protection.
 
 `backups` lists recovery backups retained after an interrupted or unsuccessful cleanup. Use `restore <number>` to restore one, or `delete-backup <number>` to remove it permanently. Both actions require an explicit confirmation.
 
@@ -229,12 +238,17 @@ You can then ask things like:
 - “Find sessions I have not used in 60 days.”
 - “Show sessions from this workspace, largest first.”
 - “Delete those sessions.”
+- “Keep this session from Session Steward cleanup.”
+- “Keep every session in this workspace.”
 - “Every 12 days, delete sessions I have not used in 45 days.”
 - “Restore my latest backup.”
 
 Cleanup uses the same local backup and verification checks as the browser and
 terminal. Codex or Claude Code asks for approval before cleanup, restore, or
 schedule changes.
+
+Keep is stored only in Session Steward. It uses session IDs and workspace paths,
+does not index transcripts, and cannot prevent provider-owned deletion.
 
 Scheduled cleanup continues in the background after you close Codex or Claude
 Code. You can ask to pause, resume, run, change, or remove a schedule. Before

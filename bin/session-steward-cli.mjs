@@ -106,6 +106,7 @@ async function main() {
     archiveStatus: values["archive-status"],
     backups: values.backups ?? false,
     cleanup: values.cleanup,
+    configDirectory: settings.getConfigDirectory(),
     events: values.events ?? false,
     eventsLimit,
     help,

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Sessions and workspaces can be marked Keep so manual and scheduled Session Steward cleanup skip them without indexing transcripts or changing provider data.
+
 ## [0.10.3] - 2026-09-10
 
 ### Fixed
