@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -11,6 +12,7 @@ import {
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 
 import { createMcpServer } from "../lib/mcp.mjs";
+import { createSessionProtectionStore } from "../lib/session-protections.mjs";
 import { createCleanupScheduleStore } from "../lib/cleanup-schedules.mjs";
 import { getProvider } from "../lib/providers/index.mjs";
 import { createProviderSettings } from "../lib/settings.mjs";
@@ -61,7 +63,12 @@ async function directoryState(root) {
 }
 
 async function connect(settings, options = {}) {
-  const server = createMcpServer({ settings, ...options });
+  const temporaryConfig = options.protectionStore
+    ? null
+    : await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-mcp-keeps-"));
+  const protectionStore = options.protectionStore
+    ?? createSessionProtectionStore({ configDirectory: temporaryConfig });
+  const server = createMcpServer({ protectionStore, settings, ...options });
   const client = new Client({ name: "session-steward-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([
@@ -72,6 +79,7 @@ async function connect(settings, options = {}) {
     client,
     close: async () => {
       await Promise.allSettled([client.close(), server.close()]);
+      if (temporaryConfig) await fs.rm(temporaryConfig, { force: true, recursive: true });
     },
   };
 }
@@ -89,6 +97,7 @@ function assertSafeSession(session) {
     "agent",
     "archived",
     "id",
+    "keep",
     "pinned",
     "provider",
     "relationship",
@@ -281,6 +290,62 @@ test("MCP reads and updates only Session Steward provider settings", async (cont
     name: "manage_settings",
   });
   assert.equal(invalid.isError, true);
+});
+
+test("MCP manages Keep and clean_sessions returns a protected no-op", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const configDirectory = path.join(fixture.codexHome, "mcp-keeps");
+  const settings = await createProviderSettings({
+    configDirectory,
+    providerHomeOverrides: { codex: fixture.codexHome },
+  });
+  const protectionStore = createSessionProtectionStore({ configDirectory });
+  const connection = await connect(settings, { protectionStore });
+  context.after(async () => {
+    await connection.close();
+    await removeCodexHomeFixture(fixture.codexHome);
+  });
+
+  await call(connection.client, "manage_settings", {
+    action: "keep-session",
+    id: fixtureSessionIds.standalone,
+    provider: "codex",
+  });
+  const listed = await call(connection.client, "find_sessions", {
+    pageSize: 100,
+    provider: "codex",
+  });
+  assert.equal(
+    listed.providers[0].sessions.find(({ id }) => id === fixtureSessionIds.standalone).keep.session,
+    true,
+  );
+  const keptOnly = await call(connection.client, "find_sessions", {
+    keep: "kept",
+    pageSize: 1,
+    provider: "codex",
+  });
+  assert.equal(keptOnly.total, 1);
+  assert.deepEqual(keptOnly.providers[0].sessions.map(({ id }) => id), [fixtureSessionIds.standalone]);
+  const notKept = await call(connection.client, "find_sessions", {
+    keep: "not-kept",
+    pageSize: 1,
+    provider: "codex",
+  });
+  assert.equal(notKept.total, 1);
+  assert.deepEqual(notKept.providers[0].sessions.map(({ id }) => id), [fixtureSessionIds.parent]);
+  const cleanup = await call(connection.client, "clean_sessions", {
+    cleanupMode: "standard",
+    ids: [fixtureSessionIds.standalone],
+    provider: "codex",
+  });
+  assert.equal(cleanup.status, "protected");
+  assert.equal(cleanup.deletedSessionCount, 0);
+
+  const overview = await call(connection.client, "get_overview", {
+    includeKeeps: true,
+    provider: "codex",
+  });
+  assert.equal(overview.keeps.sessionCount, 1);
 });
 
 test("MCP saves, runs, pauses, and removes an automatic cleanup schedule", async (context) => {

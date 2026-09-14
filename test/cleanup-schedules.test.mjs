@@ -10,6 +10,7 @@ import {
   runCleanupSchedule,
   runDueCleanupSchedules,
 } from "../lib/cleanup-schedules.mjs";
+import { createSessionProtectionStore } from "../lib/session-protections.mjs";
 
 async function temporaryDirectory(prefix) {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -149,7 +150,7 @@ test("schedule runs select the oldest bounded matches and keep cleanup criteria 
   assert.deepEqual(cleanupRequest.recordIds, ["old-1", "old-2"]);
   assert.equal(cleanupRequest.scope, "deep");
   assert.equal(calls[0].inactiveBeforeMs, now() - 60 * 86_400_000);
-  assert.equal(calls[0].pageSize, 2);
+  assert.equal(calls[0].pageSize, 100);
   assert.equal(calls[0].codexHome, "/one-time/codex-home");
   assert.equal(result.status, "completed");
   assert.equal((await store.list())[0].lastRun.candidateCount, 2);
@@ -194,6 +195,49 @@ test("largest-first schedules use the provider's bounded size order", async (con
   assert.equal(listing.page, 1);
   assert.equal(listing.minimumTranscriptBytes, 500);
   assert.deepEqual(ids, ["large", "next"]);
+});
+
+test("automatic cleanup pages past kept sessions and reports them", async (context) => {
+  const configDirectory = await temporaryDirectory("session-steward-schedule-keeps-");
+  context.after(() => fs.rm(configDirectory, { force: true, recursive: true }));
+  const scheduleStore = createCleanupScheduleStore({ configDirectory, createId: () => "kept" });
+  const protectionStore = createSessionProtectionStore({ configDirectory });
+  await scheduleStore.save(definition({ maxSessions: 1 }));
+  await protectionStore.keepSession({
+    providerHome: "/provider-home", providerId: "codex", sessionId: "kept-session",
+  });
+  await protectionStore.keepWorkspace({ workspace: "/work/kept" });
+  let cleanedIds;
+  const result = await runCleanupSchedule({
+    cleanup: async (request) => {
+      cleanedIds = request.recordIds;
+      return {
+        affectedSessionCount: 1,
+        deletedSessionCount: 1,
+        skippedProtectionCount: 0,
+        status: "completed",
+        transcriptBytes: 10,
+      };
+    },
+    force: true,
+    id: "kept",
+    protectionStore,
+    resolveProvider: () => ({
+      listSessions: async () => ({
+        pageCount: 1,
+        records: [
+          { cwd: "/work/delete", id: "delete" },
+          { cwd: "/work/kept/package", id: "workspace-kept" },
+          { cwd: "/work/other", id: "kept-session" },
+        ],
+      }),
+    }),
+    scheduleStore,
+    settings: { getHome: () => "/provider-home" },
+  });
+
+  assert.deepEqual(cleanedIds, ["delete"]);
+  assert.equal(result.protectedSkippedCount, 2);
 });
 
 test("due runner skips disabled and future schedules", async (context) => {

@@ -6,10 +6,60 @@ import test from "node:test";
 
 import {
   acquireSessionMutationLock,
+  executePreparedSessionCleanup,
+  prepareSessionCleanup,
   runSessionCleanup,
   SESSION_CLEANUP_REVIEW_REQUIRED,
   SESSION_MUTATION_BUSY,
 } from "../lib/session-cleanup.mjs";
+import { createSessionProtectionStore } from "../lib/session-protections.mjs";
+
+function protectionAwareProvider(records, { execute } = {}) {
+  const recordsById = new Map(records.map((record) => [record.id, record]));
+  return {
+    deleteSessionDeletionBackup: async () => {},
+    displayName: "Codex",
+    executeSessionDeletion: execute ?? (async ({ plan }) => ({
+      backupDirectory: "/tmp/session-steward-test-backup",
+      deletedIds: plan.ids,
+      deletedTranscriptPaths: [],
+      skippedTranscriptPaths: [],
+      unrecognizedLocationCount: 0,
+    })),
+    fingerprintSessionDeletion: async ({ plan }) => plan.ids.join(","),
+    id: "codex",
+    invalidateSessionCache: () => {},
+    loadDeletionStore: async () => ({ recordsById }),
+    planSessionDeletion: async ({ recordIds }) => {
+      const ids = new Set();
+      const pending = [...recordIds];
+      while (pending.length > 0) {
+        const id = pending.shift();
+        if (ids.has(id)) continue;
+        ids.add(id);
+        pending.push(...(recordsById.get(id)?.childThreadIds ?? []));
+      }
+      const plannedRecords = [...ids].map((id) => recordsById.get(id)).filter(Boolean);
+      return {
+        childCount: Math.max(0, ids.size - recordIds.length),
+        ids: [...ids],
+        records: plannedRecords,
+        transcriptBytes: plannedRecords.length,
+        transcriptFileCount: plannedRecords.length,
+      };
+    },
+    preflightSessionDeletion: async ({ plan }) => ({
+      transcriptBytes: plan.transcriptBytes,
+      transcriptFileCount: plan.transcriptFileCount,
+    }),
+    verifySessionDeletion: async () => ({
+      complete: true,
+      remainingDesktopStateReferences: [], remainingGoalRecords: [], remainingHistoryEntryCount: 0,
+      remainingLogRecords: [], remainingMemoryRecords: [], remainingSessionIndexEntryCount: 0,
+      remainingThreads: [], remainingTranscriptPaths: [],
+    }),
+  };
+}
 
 test("direct cleanup stops when the selected data changes during its internal recheck", async (context) => {
   const codexHome = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cleanup-recheck-"));
@@ -134,4 +184,82 @@ test("shared cleanup execution restores when verification throws after deletion"
     backupRetained: false,
     completed: true,
   });
+});
+
+test("cleanup skips kept requests and continues with unprotected sessions", async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cleanup-kept-"));
+  context.after(() => fs.rm(root, { force: true, recursive: true }));
+  const providerHome = path.join(root, "provider");
+  await fs.mkdir(providerHome);
+  const protectionStore = createSessionProtectionStore({ configDirectory: path.join(root, "config") });
+  await protectionStore.keepSession({ providerHome, providerId: "codex", sessionId: "keep" });
+  const provider = protectionAwareProvider([
+    { childThreadIds: [], cwd: "/work/one", id: "keep", parentThreadId: null },
+    { childThreadIds: [], cwd: "/work/two", id: "delete", parentThreadId: null },
+  ]);
+
+  const result = await runSessionCleanup({
+    options: { codexHome: providerHome },
+    protectionStore,
+    provider,
+    recordIds: ["keep", "delete"],
+    scope: "core",
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.deletedSessionCount, 1);
+  assert.equal(result.skippedProtectionCount, 1);
+  assert.equal(result.skippedProtections[0].id, "keep");
+});
+
+test("a kept linked child skips its selected parent without blocking unrelated cleanup", async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cleanup-cascade-"));
+  context.after(() => fs.rm(root, { force: true, recursive: true }));
+  const providerHome = path.join(root, "provider");
+  await fs.mkdir(providerHome);
+  const protectionStore = createSessionProtectionStore({ configDirectory: path.join(root, "config") });
+  await protectionStore.keepSession({ providerHome, providerId: "codex", sessionId: "child" });
+  const provider = protectionAwareProvider([
+    { childThreadIds: ["child"], cwd: "/work/one", id: "parent", parentThreadId: null },
+    { childThreadIds: [], cwd: "/work/one", id: "child", parentThreadId: "parent" },
+    { childThreadIds: [], cwd: "/work/two", id: "unrelated", parentThreadId: null },
+  ]);
+
+  const result = await runSessionCleanup({
+    options: { codexHome: providerHome },
+    protectionStore,
+    provider,
+    recordIds: ["parent", "unrelated"],
+    scope: "core",
+  });
+
+  assert.equal(result.deletedSessionCount, 1);
+  assert.equal(result.skippedProtections[0].id, "parent");
+  assert.equal(result.skippedProtections[0].linkedSessionId, "child");
+});
+
+test("adding Keep after preview invalidates cleanup before mutation", async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-cleanup-keep-race-"));
+  context.after(() => fs.rm(root, { force: true, recursive: true }));
+  const providerHome = path.join(root, "provider");
+  await fs.mkdir(providerHome);
+  let executed = false;
+  const provider = protectionAwareProvider([
+    { childThreadIds: [], cwd: "/work/one", id: "session-1", parentThreadId: null },
+  ], { execute: async () => { executed = true; } });
+  const protectionStore = createSessionProtectionStore({ configDirectory: path.join(root, "config") });
+  const prepared = await prepareSessionCleanup({
+    options: { codexHome: providerHome }, protectionStore, provider, recordIds: ["session-1"], scope: "core",
+  });
+  await protectionStore.keepSession({ providerHome, providerId: "codex", sessionId: "session-1" });
+
+  await assert.rejects(executePreparedSessionCleanup({
+    expectedFingerprint: prepared.fingerprint,
+    options: { codexHome: providerHome },
+    protectionStore,
+    provider,
+    recordIds: prepared.requestedIds,
+    scope: prepared.scope,
+  }), (error) => error.code === SESSION_CLEANUP_REVIEW_REQUIRED);
+  assert.equal(executed, false);
 });

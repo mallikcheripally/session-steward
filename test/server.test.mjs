@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
-import { startLocalServer } from "../lib/server.mjs";
+import { startLocalServer as startLocalServerBase } from "../lib/server.mjs";
 import {
   acquireSessionMutationLock,
   SESSION_MUTATION_BUSY,
@@ -20,6 +20,18 @@ import {
   removeCodexHomeFixture,
 } from "./fixtures/codex-home.mjs";
 import { createClaudeHomeFixture, removeClaudeHomeFixture } from "./fixtures/claude-home.mjs";
+
+async function startLocalServer(options) {
+  if (options.configDirectory) return startLocalServerBase(options);
+  const configDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-server-config-"));
+  const server = await startLocalServerBase({ ...options, configDirectory });
+  const close = server.close.bind(server);
+  server.close = async () => {
+    await close();
+    await fs.rm(configDirectory, { force: true, recursive: true });
+  };
+  return server;
+}
 
 function startSlowDeletion({ baseUrl, bodyStart, token }) {
   let request;
@@ -962,4 +974,98 @@ test("invalid saved folder settings fall back to the default", async (context) =
   const config = await fetch(`http://127.0.0.1:${server.port}/api/config`).then((response) => response.json());
   assert.equal(config.providers.codex.home, path.join(os.homedir(), ".codex"));
   assert.equal(config.providers.codex.source, "default");
+});
+
+test("browser Keep routes decorate sessions and exclude them from deletion plans", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const configDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-server-keeps-"));
+  const server = await startLocalServer({ codexHome: fixture.codexHome, configDirectory, port: 0 });
+  context.after(async () => {
+    await server.close();
+    await removeCodexHomeFixture(fixture.codexHome);
+    await fs.rm(configDirectory, { force: true, recursive: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const headers = {
+    "Content-Type": "application/json",
+    "Origin": baseUrl,
+    "X-Session-Steward-Token": server.token,
+  };
+  const sessionId = fixtureSessionIds.standalone;
+
+  const keepResponse = await fetch(`${baseUrl}/api/protections`, {
+    body: JSON.stringify({
+      kind: "sessions",
+      providerId: "codex",
+      sessionIds: [sessionId, fixtureSessionIds.parent],
+    }),
+    headers,
+    method: "PUT",
+  });
+  assert.equal(keepResponse.status, 200);
+  const keptPage = await fetch(`${baseUrl}/api/sessions?provider=codex&keep=kept&pageSize=1`).then((response) => response.json());
+  assert.equal(keptPage.total, 2);
+  assert.equal(keptPage.records.length, 1);
+  assert.equal(keptPage.pageCount, 2);
+  const detail = await fetch(`${baseUrl}/api/sessions/${sessionId}?provider=codex`).then((response) => response.json());
+  assert.equal(detail.record.keep.session, true);
+  assert.equal(detail.record.keep.kept, true);
+
+  const protectedPlan = await createDeletionPlan(baseUrl, [sessionId]);
+  assert.equal(protectedPlan.sessionCount, 0);
+  assert.equal(protectedPlan.skippedProtectionCount, 1);
+  assert.equal(protectedPlan.id, null);
+
+  const removeResponse = await fetch(`${baseUrl}/api/protections`, {
+    body: JSON.stringify({ kind: "session", providerId: "codex", sessionId }),
+    headers,
+    method: "DELETE",
+  });
+  assert.equal(removeResponse.status, 200);
+  assert.equal((await createDeletionPlan(baseUrl, [sessionId])).sessionCount, 1);
+
+  const removeManyResponse = await fetch(`${baseUrl}/api/protections`, {
+    body: JSON.stringify({
+      kind: "sessions",
+      providerId: "codex",
+      sessionIds: [fixtureSessionIds.parent],
+    }),
+    headers,
+    method: "DELETE",
+  });
+  assert.equal(removeManyResponse.status, 200);
+  assert.equal((await fetch(`${baseUrl}/api/sessions?provider=codex&keep=kept`).then((response) => response.json())).total, 0);
+});
+
+test("browser workspace Keep rules are searched and paginated", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const configDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-server-workspace-keeps-"));
+  const server = await startLocalServer({ codexHome: fixture.codexHome, configDirectory, port: 0 });
+  context.after(async () => {
+    await server.close();
+    await removeCodexHomeFixture(fixture.codexHome);
+    await fs.rm(configDirectory, { force: true, recursive: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const headers = {
+    "Content-Type": "application/json",
+    "Origin": baseUrl,
+    "X-Session-Steward-Token": server.token,
+  };
+  const workspaceRoot = path.join(path.parse(fixture.workspace).root, "work");
+  for (const workspace of ["alpha", "beta", "gamma"].map((name) => path.join(workspaceRoot, name))) {
+    const response = await fetch(`${baseUrl}/api/protections`, {
+      body: JSON.stringify({ kind: "workspace", workspace }),
+      headers,
+      method: "PUT",
+    });
+    assert.equal(response.status, 200);
+  }
+
+  const firstPage = await fetch(`${baseUrl}/api/protections?provider=codex&kind=workspaces&pageSize=2`).then((response) => response.json());
+  assert.equal(firstPage.total, 3);
+  assert.equal(firstPage.pageCount, 2);
+  assert.equal(firstPage.records.length, 2);
+  const searched = await fetch(`${baseUrl}/api/protections?provider=codex&kind=workspaces&search=beta`).then((response) => response.json());
+  assert.deepEqual(searched.records.map((item) => item.path), [path.join(workspaceRoot, "beta")]);
 });

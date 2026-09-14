@@ -15,6 +15,7 @@ import {
   GitBranch,
   HardDrive,
   Info,
+  MoreHorizontal,
   Pin,
   RefreshCw,
   Search,
@@ -163,9 +164,15 @@ const workspaceOptionLabel = ({ path: workspacePath, sessionCount, transcriptByt
   return `${folderName(workspacePath)} · ${sizeLabel} · ${sessionLabel}${parent}`;
 };
 
-const selectionRecord = ({ cwd, displayName, transcriptBytes, updatedAtMs }) => ({
+const selectionRecord = ({ cwd, displayName, keep, transcriptBytes, updatedAtMs }) => ({
   cwd,
   displayName,
+  keep: {
+    kept: Boolean(keep?.kept),
+    session: Boolean(keep?.session),
+    workspace: Boolean(keep?.workspace),
+    workspacePath: keep?.workspacePath || null,
+  },
   transcriptBytes,
   updatedAtMs,
 });
@@ -238,13 +245,22 @@ function App() {
   const [cursorIndex, setCursorIndex] = useState(0);
   const [inspected, setInspected] = useState(null);
   const [filterValues, setFilterValues] = useState(DEFAULT_FILTER_VALUES);
+  const [listMode, setListMode] = useState("all");
+  const [keptView, setKeptView] = useState("sessions");
   const [sort, setSort] = useState("updated");
   const [page, setPage] = useState(1);
+  const [workspaceRules, setWorkspaceRules] = useState([]);
+  const [workspaceRulePage, setWorkspaceRulePage] = useState(1);
+  const [workspaceRulePages, setWorkspaceRulePages] = useState(1);
+  const [workspaceRuleSearch, setWorkspaceRuleSearch] = useState("");
+  const [workspaceRuleTotal, setWorkspaceRuleTotal] = useState(0);
+  const [workspaceRulesLoading, setWorkspaceRulesLoading] = useState(false);
   const [token, setToken] = useState("");
   const [providerSettings, setProviderSettings] = useState(null);
   const [providerHomeDraft, setProviderHomeDraft] = useState("");
   const [editingProviderHome, setEditingProviderHome] = useState(false);
   const [isSavingProviderHome, setIsSavingProviderHome] = useState(false);
+  const [isSavingKeep, setIsSavingKeep] = useState(false);
   const [dialog, setDialog] = useState(false);
   const [scope, setScope] = useState("deep");
   const [plan, setPlan] = useState(null);
@@ -252,6 +268,7 @@ function App() {
   const [planNotice, setPlanNotice] = useState("");
   const [operation, setOperation] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [keepToast, setKeepToast] = useState(null);
   const [error, setError] = useState("");
   const [compatibility, setCompatibility] = useState(null);
   const [overview, setOverview] = useState(null);
@@ -270,8 +287,10 @@ function App() {
   const inspectSequence = useRef(0);
   const loadSequence = useRef(0);
   const loadController = useRef(null);
+  const workspaceRulesSequence = useRef(0);
   const planSequence = useRef(0);
   const overviewSequence = useRef(0);
+  const keepToastSequence = useRef(0);
   const rowRefs = useRef([]);
   const searchInputRef = useRef(null);
   const selectPageRef = useRef(null);
@@ -317,6 +336,7 @@ function App() {
       sort,
       supporting,
       workspace,
+      keep: listMode === "kept" ? "kept" : "",
       ...queryOverrides,
     };
 
@@ -334,6 +354,7 @@ function App() {
         provider: providerId,
         refresh: String(Boolean(query.refresh)),
       });
+      if (query.keep) params.set("keep", query.keep);
       if (query.inactiveDays) params.set("inactiveDays", query.inactiveDays);
       if (query.workspace !== ALL_WORKSPACES) params.set("workspace", query.workspace);
       const result = await api(`/api/sessions?${params}`, { signal: controller.signal });
@@ -348,6 +369,36 @@ function App() {
       if (sequence === loadSequence.current) {
         setIsLoading(false);
       }
+    }
+  };
+
+  const loadWorkspaceRules = async ({ queryOverrides = {} } = {}) => {
+    const sequence = ++workspaceRulesSequence.current;
+    const query = {
+      page: workspaceRulePage,
+      search: workspaceRuleSearch,
+      ...queryOverrides,
+    };
+    try {
+      setWorkspaceRulesLoading(true);
+      setError("");
+      const params = new URLSearchParams({
+        kind: "workspaces",
+        page: String(query.page),
+        pageSize: String(PAGE_SIZE),
+        provider: activeProviderId,
+        search: query.search,
+      });
+      const result = await api(`/api/protections?${params}`);
+      if (sequence !== workspaceRulesSequence.current) return;
+      setWorkspaceRules(result.records);
+      setWorkspaceRuleTotal(result.total);
+      setWorkspaceRulePages(result.pageCount);
+      if (result.page !== query.page) setWorkspaceRulePage(result.page);
+    } catch (issue) {
+      if (sequence === workspaceRulesSequence.current) setError(issue.message);
+    } finally {
+      if (sequence === workspaceRulesSequence.current) setWorkspaceRulesLoading(false);
     }
   };
 
@@ -373,7 +424,9 @@ function App() {
       setError("");
       const [diagnostic] = await Promise.all([
         api(`/api/compatibility?provider=${encodeURIComponent(activeProviderId)}`),
-        load({ queryOverrides: { refresh: true } }),
+        listMode === "kept" && keptView === "workspaces"
+          ? loadWorkspaceRules()
+          : load({ queryOverrides: { refresh: true } }),
         loadOverview({ refresh: true }),
       ]);
       setCompatibility(diagnostic);
@@ -447,9 +500,16 @@ function App() {
 
   useEffect(() => {
     if (!configReady || !activeProviderId) return undefined;
+    if (listMode === "kept" && keptView === "workspaces") return undefined;
     const timer = setTimeout(load, 120);
     return () => clearTimeout(timer);
-  }, [activeProviderId, archiveStatus, configReady, inactiveDays, internals, page, search, sort, supporting, workspace]);
+  }, [activeProviderId, archiveStatus, configReady, inactiveDays, internals, keptView, listMode, page, search, sort, supporting, workspace]);
+
+  useEffect(() => {
+    if (!configReady || !activeProviderId || listMode !== "kept" || keptView !== "workspaces") return undefined;
+    const timer = setTimeout(loadWorkspaceRules, 120);
+    return () => clearTimeout(timer);
+  }, [activeProviderId, configReady, keptView, listMode, workspaceRulePage, workspaceRuleSearch]);
 
   useEffect(() => {
     if (!showCompatibilityDetails) return undefined;
@@ -492,7 +552,42 @@ function App() {
     if (selected.size === 0) setSelectionTrayExpanded(false);
   }, [selected]);
 
+  useEffect(() => {
+    if (!keepToast) return undefined;
+    const timer = setTimeout(() => setKeepToast(null), 6000);
+    return () => clearTimeout(timer);
+  }, [keepToast?.id]);
+
+  const showKeepToast = (toast) => {
+    keepToastSequence.current += 1;
+    setKeepToast({ ...toast, id: keepToastSequence.current });
+  };
+
   const clearFilters = resetFilters;
+
+  const changeListMode = (mode) => {
+    if (mode === listMode) return;
+    clearSelection();
+    closeInspector();
+    setIsLoading(true);
+    setPage(1);
+    setListMode(mode);
+    if (mode === "all") setKeptView("sessions");
+  };
+
+  const changeKeptView = (view) => {
+    if (view === keptView) return;
+    clearSelection();
+    closeInspector();
+    setKeptView(view);
+    if (view === "sessions") {
+      setIsLoading(true);
+      setPage(1);
+    } else {
+      setWorkspaceRulesLoading(true);
+      setWorkspaceRulePage(1);
+    }
+  };
 
   const inspect = async (id) => {
     const sequence = ++inspectSequence.current;
@@ -563,6 +658,7 @@ function App() {
   };
 
   const openDeleteDialog = async () => {
+    if (![...selectedRecords.values()].some((record) => !record.keep?.kept)) return;
     try {
       setIsPlanning(true);
       setError("");
@@ -805,6 +901,145 @@ function App() {
     });
   };
 
+  const updateKeep = async ({ announce = true, keep, kind, sessionId, workspacePath }) => {
+    const currentRecord = kind === "session"
+      ? records.find((record) => record.id === sessionId) || (inspected?.id === sessionId ? inspected : null)
+      : null;
+    const remainsKeptByWorkspace = !keep && kind === "session" && Boolean(currentRecord?.keep?.workspace);
+    try {
+      setIsSavingKeep(true);
+      setError("");
+      await api("/api/protections", {
+        method: keep ? "PUT" : "DELETE",
+        headers: { "X-Session-Steward-Token": token },
+        body: JSON.stringify(kind === "session"
+          ? { kind, providerId: activeProviderId, sessionId }
+          : { kind, workspace: workspacePath }),
+      });
+      if (kind === "session") {
+        if (!keep && listMode === "kept") {
+          setSelected((current) => {
+            const next = new Set(current);
+            next.delete(sessionId);
+            return next;
+          });
+        }
+        setSelectedRecords((current) => {
+          const next = new Map(current);
+          const selectedRecord = next.get(sessionId);
+          if (!keep && listMode === "kept") {
+            next.delete(sessionId);
+          } else if (selectedRecord) {
+            next.set(sessionId, {
+              ...selectedRecord,
+              keep: {
+                ...selectedRecord.keep,
+                kept: keep || selectedRecord.keep.workspace,
+                session: keep,
+              },
+            });
+          }
+          return next;
+        });
+      } else if (kind === "workspace") {
+        clearSelection();
+      }
+      if (listMode === "kept" && keptView === "workspaces") {
+        await loadWorkspaceRules();
+      } else {
+        await load({ queryOverrides: { refresh: true } });
+      }
+      if (inspected?.id) await inspect(inspected.id);
+      if (announce) {
+        const toast = keep
+          ? kind === "workspace"
+            ? { text: "Session Steward cleanup will skip sessions in this workspace.", title: "Workspace kept" }
+            : { text: "Session Steward cleanup will skip this session.", title: "Session kept" }
+          : kind === "workspace"
+            ? { text: "This workspace rule no longer applies to cleanup.", title: "Workspace Keep removed" }
+            : remainsKeptByWorkspace
+              ? { text: "Still kept by its workspace.", title: "Individual Keep removed" }
+              : { text: "This session can now be included in cleanup.", title: "Keep removed" };
+        showKeepToast({
+          ...toast,
+          undo: () => updateKeep({ announce: false, keep: !keep, kind, sessionId, workspacePath }),
+        });
+      }
+    } catch (issue) {
+      setError(issue.message);
+    } finally {
+      setIsSavingKeep(false);
+    }
+  };
+
+  const restoreSelectedKeeps = async ({ keep, sessionIds }) => {
+    try {
+      setIsSavingKeep(true);
+      setError("");
+      await api("/api/protections", {
+        method: keep ? "PUT" : "DELETE",
+        headers: { "X-Session-Steward-Token": token },
+        body: JSON.stringify({ kind: "sessions", providerId: activeProviderId, sessionIds }),
+      });
+      await load({ queryOverrides: { refresh: true } });
+      if (inspected?.id) await inspect(inspected.id);
+    } catch (issue) {
+      setError(issue.message);
+    } finally {
+      setIsSavingKeep(false);
+    }
+  };
+
+  const updateSelectedKeeps = async (action) => {
+    const sessionIds = [...selectedRecords.entries()]
+      .filter(([, record]) => action === "keep"
+        ? !record.keep?.kept
+        : record.keep?.session && !record.keep?.workspace)
+      .map(([id]) => id);
+    if (sessionIds.length === 0) return;
+    const keep = action === "keep";
+    try {
+      setIsSavingKeep(true);
+      setError("");
+      await api("/api/protections", {
+        method: keep ? "PUT" : "DELETE",
+        headers: { "X-Session-Steward-Token": token },
+        body: JSON.stringify({
+          kind: "sessions",
+          providerId: activeProviderId,
+          sessionIds,
+        }),
+      });
+      clearSelection();
+      await load({ queryOverrides: { refresh: true } });
+      if (inspected?.id) await inspect(inspected.id);
+      const count = sessionIds.length.toLocaleString();
+      showKeepToast({
+        title: keep
+          ? `${count} ${sessionIds.length === 1 ? "session" : "sessions"} kept`
+          : `${count} ${sessionIds.length === 1 ? "Keep" : "Keeps"} removed`,
+        text: keep
+          ? `Session Steward cleanup will skip ${sessionIds.length === 1 ? "this session" : "these sessions"}.`
+          : `${sessionIds.length === 1 ? "This session" : "These sessions"} can now be included in cleanup.`,
+        undo: () => restoreSelectedKeeps({ keep: !keep, sessionIds }),
+      });
+    } catch (issue) {
+      setError(issue.message);
+    } finally {
+      setIsSavingKeep(false);
+    }
+  };
+
+  const manageWorkspaceKeeps = (workspacePath = "") => {
+    clearSelection();
+    closeInspector();
+    setListMode("kept");
+    setKeptView("workspaces");
+    setWorkspaceRuleSearch(workspacePath);
+    setWorkspaceRulePage(1);
+    setWorkspaceRulesLoading(true);
+  };
+
   const moveCursor = (offset, { selectMoved = false } = {}) => {
     if (records.length === 0) return;
     const nextIndex = Math.min(records.length - 1, Math.max(0, cursorIndex + offset));
@@ -860,6 +1095,7 @@ function App() {
     isDeleting,
     isPlanning,
     isSavingProviderHome,
+    listMode,
     moveCursor,
     openDeleteDialog,
     page,
@@ -870,6 +1106,7 @@ function App() {
     showShortcutSheet,
     toggle,
     togglePage,
+    updateSelectedKeeps,
   };
 
   useEffect(() => {
@@ -955,7 +1192,10 @@ function App() {
         setPage(state.page + 1);
       } else if (event.key === "Backspace" || event.key === "Delete") {
         event.preventDefault();
-        if (state.selected.size > 0) state.openDeleteDialog();
+        if (state.selected.size > 0) {
+          if (state.listMode === "kept") state.updateSelectedKeeps("stop");
+          else state.openDeleteDialog();
+        }
       }
     };
 
@@ -1009,56 +1249,122 @@ function App() {
         providerId={activeProviderId}
       />}
 
-      <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_420px] 2xl:grid-cols-[minmax(0,1fr)_480px]">
+      <section className={`grid items-start gap-5 ${listMode === "kept" && keptView === "workspaces" ? "" : "lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_420px] 2xl:grid-cols-[minmax(0,1fr)_480px]"}`}>
         <div className="surface overflow-hidden">
           <div className="session-list-header">
-            <div>
-              <div className="flex items-baseline gap-2">
-                <h2 className="section-title">Sessions</h2>
-                <span aria-live="polite" className="shown-count">{total.toLocaleString()} shown</span>
+            <div className="collection-heading">
+              <h2 className="section-title">Sessions</h2>
+              <div className="collection-switch" aria-label="Session list mode">
+                <button aria-pressed={listMode === "all"} onClick={() => changeListMode("all")} type="button">All</button>
+                <button aria-pressed={listMode === "kept"} onClick={() => changeListMode("kept")} type="button"><ShieldCheck size={12}/>Kept</button>
               </div>
+              <span aria-live="polite" className="shown-count">{(listMode === "kept" && keptView === "workspaces" ? workspaceRuleTotal : total).toLocaleString()} shown</span>
             </div>
-            <div className="session-list-tools"><SortControl onChange={setSort} value={sort}/><p className="shortcut-hint">Press <kbd>?</kbd> for shortcuts</p></div>
+            {!(listMode === "kept" && keptView === "workspaces") && <div className="session-list-tools"><SortControl onChange={setSort} value={sort}/><p className="shortcut-hint">Press <kbd>?</kbd> for shortcuts</p></div>}
           </div>
 
-          <Filters
-            activeFilters={activeFilters}
-            clearFilters={clearFilters}
-            filters={availableFilters}
-            overview={overview}
-            searchInputRef={searchInputRef}
-            setFilter={setFilter}
-            setShowMoreFilters={setShowMoreFilters}
-            showMoreFilters={showMoreFilters}
-            values={filterValues}
-          />
+          {listMode === "kept" && <div className="kept-view-switch" aria-label="Kept items view">
+            <button aria-pressed={keptView === "sessions"} onClick={() => changeKeptView("sessions")} type="button">Sessions</button>
+            <button aria-pressed={keptView === "workspaces"} onClick={() => changeKeptView("workspaces")} type="button">Workspaces</button>
+          </div>}
 
-          <div className="page-selection-row">
-            <label className="selection-control"><input ref={selectPageRef} aria-checked={somePageSelected && !allPageSelected ? "mixed" : allPageSelected} checked={allPageSelected} onChange={togglePage} disabled={!records.length || isLoading} type="checkbox"/><span>Select this page</span></label>
-          </div>
+          {listMode === "kept" && keptView === "workspaces"
+            ? <WorkspaceRules
+                isSaving={isSavingKeep}
+                loading={workspaceRulesLoading}
+                onRemove={(workspacePath) => updateKeep({ keep: false, kind: "workspace", workspacePath })}
+                onSearch={(value) => { setWorkspaceRuleSearch(value); setWorkspaceRulePage(1); }}
+                page={workspaceRulePage}
+                pages={workspaceRulePages}
+                records={workspaceRules}
+                search={workspaceRuleSearch}
+                setPage={setWorkspaceRulePage}
+              />
+            : <>
+                <Filters
+                  activeFilters={activeFilters}
+                  clearFilters={clearFilters}
+                  filters={availableFilters}
+                  overview={overview}
+                  searchInputRef={searchInputRef}
+                  setFilter={setFilter}
+                  setShowMoreFilters={setShowMoreFilters}
+                  showMoreFilters={showMoreFilters}
+                  values={filterValues}
+                />
 
-          <div className="min-h-[360px]">
-            {isLoading
-              ? <SessionSkeleton/>
-              : records.length > 0
-                ? <SessionRows cursorIndex={cursorIndex} inspectedId={inspected?.id} onInspect={inspect} onToggle={toggle} records={records} rowRefs={rowRefs} selected={selected} sort={sort}/>
-                : <EmptyState hasActiveFilters={hasActiveFilters} onClear={clearFilters}/>
-            }
-          </div>
+                <div className="page-selection-row">
+                  <label className="selection-control"><input ref={selectPageRef} aria-checked={somePageSelected && !allPageSelected ? "mixed" : allPageSelected} checked={allPageSelected} onChange={togglePage} disabled={!records.length || isLoading} type="checkbox"/><span>Select this page</span></label>
+                </div>
 
-          <Pagination page={page} pages={pages} numbers={pageNumbers} setPage={setPage}/>
+                <div className="min-h-[360px]">
+                  {isLoading
+                    ? <SessionSkeleton/>
+                    : records.length > 0
+                      ? <SessionRows
+                          cursorIndex={cursorIndex}
+                          inspectedId={inspected?.id}
+                          onInspect={inspect}
+                          onManageWorkspaceKeep={(record) => manageWorkspaceKeeps(record.keep?.workspacePath || record.cwd)}
+                          onToggle={toggle}
+                          onToggleDirectKeep={(record) => updateKeep({ keep: false, kind: "session", sessionId: record.id })}
+                          records={records}
+                          rowRefs={rowRefs}
+                          selected={selected}
+                          sort={sort}
+                        />
+                      : <EmptyState hasActiveFilters={hasActiveFilters} kept={listMode === "kept"} onClear={clearFilters}/>
+                  }
+                </div>
+
+                <Pagination page={page} pages={pages} numbers={pageNumbers} setPage={setPage}/>
+              </>}
         </div>
 
-        <Inspector key={`${activeProviderId}:${inspected?.id ?? "empty"}`} onClose={closeInspector} onOpenSession={inspect} providerId={activeProviderId} record={inspected}/>
+        {!(listMode === "kept" && keptView === "workspaces") && <Inspector
+          isSavingKeep={isSavingKeep}
+          key={`${activeProviderId}:${inspected?.id ?? "empty"}`}
+          onClose={closeInspector}
+          onOpenSession={inspect}
+          onToggleSessionKeep={(record) => updateKeep({
+            keep: !record.keep?.session,
+            kind: "session",
+            sessionId: record.id,
+          })}
+          onToggleWorkspaceKeep={(record) => updateKeep({
+            keep: !record.keep?.workspace,
+            kind: "workspace",
+            workspacePath: record.keep?.workspacePath || record.cwd,
+          })}
+          providerId={activeProviderId}
+          record={inspected}
+        />}
       </section>
     </div>
+
+    {keepToast && <KeepToast
+      isBusy={isSavingKeep}
+      onDismiss={() => setKeepToast(null)}
+      onUndo={async () => {
+        const undo = keepToast.undo;
+        setKeepToast(null);
+        await undo();
+      }}
+      raised={selected.size > 0}
+      text={keepToast.text}
+      title={keepToast.title}
+    />}
 
     {selected.size > 0 && <SelectionTray
       expanded={selectionTrayExpanded}
       isLoading={isLoading}
       isPlanning={isPlanning}
+      isSavingKeep={isSavingKeep}
       onClear={clearSelection}
       onDelete={openDeleteDialog}
+      mode={listMode}
+      onKeep={updateSelectedKeeps}
+      onManageWorkspaces={() => manageWorkspaceKeeps()}
       onRemove={removeSelectedRecord}
       onToggle={() => setSelectionTrayExpanded((current) => !current)}
       records={selectedRecords}
@@ -1096,6 +1402,15 @@ function Alert({ children, kind, onDismiss }) {
   const Icon = config.icon;
 
   return <div className={`alert ${config.tone}`}><Icon size={17}/><p>{children}</p><button type="button" onClick={onDismiss} aria-label="Dismiss message"><X size={15}/></button></div>;
+}
+
+function KeepToast({ isBusy, onDismiss, onUndo, raised, text, title }) {
+  return <aside aria-atomic="true" aria-live="polite" className={`keep-toast ${raised ? "keep-toast-raised" : ""}`} role="status">
+    <div className="keep-toast-icon"><ShieldCheck size={15}/></div>
+    <div className="min-w-0"><strong>{title}</strong><p>{text}</p></div>
+    <button className="keep-toast-undo" disabled={isBusy} onClick={onUndo} type="button">Undo</button>
+    <button aria-label="Dismiss notification" className="keep-toast-dismiss" onClick={onDismiss} type="button"><X size={14}/></button>
+  </aside>;
 }
 
 function ProviderHomeControl({ editing, isSaving, onCancel, onChange, onEdit, onReset, onSubmit, provider, value }) {
@@ -1230,16 +1545,25 @@ function Toggle({ checked, children, className = "", onChange }) {
   return <label className={`toggle ${className} ${checked ? "toggle-active" : ""}`}><input checked={checked} onChange={(event) => onChange(event.target.checked)} type="checkbox"/><span className="toggle-track"><span/></span><span className="toggle-copy">{children}</span></label>;
 }
 
-function SessionRow({ cursor, inspected, onInspect, onToggle, record, rowRef, selected }) {
+function SessionRow({ cursor, inspected, onInspect, onManageWorkspaceKeep, onToggle, onToggleDirectKeep, record, rowRef, selected }) {
   const kind = getSessionKind(record);
   const KindIcon = kind?.icon;
+  const keepLabel = record.keep?.kept ? "Kept" : null;
+  const keepAction = record.keep?.workspace ? onManageWorkspaceKeep : onToggleDirectKeep;
+  const keepActionLabel = record.keep?.workspace
+    ? `Manage workspace Keep for ${record.displayName}`
+    : `Stop keeping ${record.displayName}`;
 
-  return <div ref={rowRef} className={`session-row group ${cursor ? "session-row-cursor" : ""} ${inspected ? "session-row-inspected" : ""} ${selected ? "session-row-selected" : ""}`}>
+  return <div ref={rowRef} className={`session-row group ${cursor ? "session-row-cursor" : ""} ${inspected ? "session-row-inspected" : ""} ${selected ? "session-row-selected" : ""} ${record.keep?.kept ? "session-row-kept" : ""}`}>
     <label className="session-checkbox" aria-label={`Select ${record.displayName}`}><input checked={selected} onChange={() => onToggle(record)} type="checkbox"/></label>
-    <button type="button" onClick={() => onInspect(record.id)} className="min-w-0 text-left">
-      <span className="session-title" title={record.displayName}>{record.displayName}</span>
-      <span className="session-workspace"><FolderKanban size={12} className="shrink-0"/><span className="truncate" title={record.cwd || undefined}>{folderName(record.cwd)}</span>{record.archived && <span className="archive-tag"><Archive size={10}/>Archived</span>}</span>
-    </button>
+    <div className="session-primary">
+      <button type="button" onClick={() => onInspect(record.id)} className="session-open text-left"><span className="session-title" title={record.displayName}>{record.displayName}</span></button>
+      <div className="session-context">
+        <button type="button" onClick={() => onInspect(record.id)} className="session-workspace text-left"><FolderKanban size={12} className="shrink-0"/><span className="truncate" title={record.cwd || undefined}>{folderName(record.cwd)}</span></button>
+        {record.archived && <span className="archive-tag"><Archive size={10}/>Archived</span>}
+        {keepLabel && <button aria-label={keepActionLabel} className="keep-tag keep-tag-action" disabled={!keepAction} onClick={() => keepAction(record)} title={keepActionLabel} type="button"><ShieldCheck size={10}/>{keepLabel}</button>}
+      </div>
+    </div>
     <div className="session-row-meta">
       {Number.isFinite(record.transcriptBytes) && <span aria-label={`Transcript ${fileSize(record.transcriptBytes)}`} className="size-badge" title="Transcript"><HardDrive size={11}/>{fileSize(record.transcriptBytes)}</span>}
       <span className="time-badge" title={fullDate(record.updatedAtMs)}><Clock3 size={11}/>{age(record.updatedAtMs)}</span>
@@ -1249,7 +1573,7 @@ function SessionRow({ cursor, inspected, onInspect, onToggle, record, rowRef, se
   </div>;
 }
 
-function SessionRows({ cursorIndex, inspectedId, onInspect, onToggle, records, rowRefs, selected, sort }) {
+function SessionRows({ cursorIndex, inspectedId, onInspect, onManageWorkspaceKeep, onToggle, onToggleDirectKeep, records, rowRefs, selected, sort }) {
   const renderTime = Date.now();
   let previousGroup = null;
 
@@ -1260,7 +1584,7 @@ function SessionRows({ cursorIndex, inspectedId, onInspect, onToggle, records, r
 
     return <div className={`session-row-block ${showGroup ? "session-row-block-grouped" : ""}`} key={record.id}>
       {showGroup && <div aria-label={group} className="date-separator" role="separator"><span>{group}</span><span aria-hidden="true" className="date-separator-line"/></div>}
-      <SessionRow cursor={cursorIndex === index} inspected={inspectedId === record.id} onInspect={onInspect} onToggle={onToggle} record={record} rowRef={(node) => { rowRefs.current[index] = node; }} selected={selected.has(record.id)}/>
+      <SessionRow cursor={cursorIndex === index} inspected={inspectedId === record.id} onInspect={onInspect} onManageWorkspaceKeep={onManageWorkspaceKeep} onToggle={onToggle} onToggleDirectKeep={onToggleDirectKeep} record={record} rowRef={(node) => { rowRefs.current[index] = node; }} selected={selected.has(record.id)}/>
     </div>;
   })}</div>;
 }
@@ -1302,22 +1626,41 @@ function ActiveFilterRow({ activeFilters, clearFilters, overview, setFilter, val
   </div>;
 }
 
-function SelectionTray({ expanded, isLoading, isPlanning, onClear, onDelete, onRemove, onToggle, records, selectedCount }) {
+function SelectionTray({ expanded, isLoading, isPlanning, isSavingKeep, mode, onClear, onDelete, onKeep, onManageWorkspaces, onRemove, onToggle, records, selectedCount }) {
   const entries = [...records.entries()];
   const transcriptBytes = entries.reduce((sum, [, record]) => Number.isFinite(record.transcriptBytes)
     ? sum + record.transcriptBytes
     : sum, 0);
   const withoutTranscript = entries.filter(([, record]) => record.transcriptBytes === null).length;
-  const summary = `${selectedCount.toLocaleString()} ${selectedCount === 1 ? "session" : "sessions"} selected · ${fileSize(transcriptBytes)}${withoutTranscript > 0 ? ` · ${withoutTranscript.toLocaleString()} without a transcript` : ""}`;
+  const unkeptCount = entries.filter(([, record]) => !record.keep?.kept).length;
+  const directKeepCount = entries.filter(([, record]) => record.keep?.session && !record.keep?.workspace).length;
+  const workspaceKeepCount = entries.filter(([, record]) => record.keep?.workspace).length;
+  const keptCount = selectedCount - unkeptCount;
+  const primaryKeepAction = unkeptCount > 0
+    ? { action: "keep", count: unkeptCount, label: "Keep" }
+    : directKeepCount > 0
+      ? { action: "stop", count: directKeepCount, label: "Stop keeping" }
+      : null;
+  const showSecondaryStop = unkeptCount > 0 && directKeepCount > 0;
+  const workspaceIsPrimary = !primaryKeepAction && workspaceKeepCount > 0;
+  const showMoreActions = showSecondaryStop || (workspaceKeepCount > 0 && !workspaceIsPrimary);
+  const summary = `${selectedCount.toLocaleString()} ${selectedCount === 1 ? "session" : "sessions"} selected${keptCount > 0 ? ` · ${keptCount.toLocaleString()} kept` : ""} · ${fileSize(transcriptBytes)}${withoutTranscript > 0 ? ` · ${withoutTranscript.toLocaleString()} without a transcript` : ""}`;
 
   return <section aria-label="Selected sessions" className={`selection-tray ${expanded ? "selection-tray-expanded" : ""}`}>
     {expanded && <div className="selection-tray-review">
       <div className="selection-tray-review-heading"><div><p className="selection-tray-heading">Selected sessions</p><p className="selection-tray-copy">Review selections from every page.</p></div><span className="selection-tray-count" key={selectedCount}>{selectedCount.toLocaleString()}</span></div>
-      <div className="selection-tray-records">{entries.map(([id, record]) => <div key={id} className="selection-tray-record"><div className="min-w-0"><p className="selection-tray-title">{record.displayName}</p><p className="selection-tray-meta"><FolderKanban size={11}/><span className="truncate">{folderName(record.cwd)}</span><span aria-hidden="true">·</span><HardDrive size={11}/><span>{Number.isFinite(record.transcriptBytes) ? fileSize(record.transcriptBytes) : "No transcript"}</span></p></div><button type="button" onClick={() => onRemove(id)} aria-label={`Remove ${record.displayName} from selection`} className="icon-button"><X size={15}/></button></div>)}</div>
+      <div className="selection-tray-records">{entries.map(([id, record]) => <div key={id} className="selection-tray-record"><div className="min-w-0"><p className="selection-tray-title">{record.displayName}</p><p className="selection-tray-meta"><FolderKanban size={11}/><span className="truncate">{folderName(record.cwd)}</span><span aria-hidden="true">·</span><HardDrive size={11}/><span>{Number.isFinite(record.transcriptBytes) ? fileSize(record.transcriptBytes) : "No transcript"}</span>{record.keep?.kept && <><span aria-hidden="true">·</span><span className="selection-kept"><ShieldCheck size={11}/>Kept</span></>}</p></div><button type="button" onClick={() => onRemove(id)} aria-label={`Remove ${record.displayName} from selection`} className="icon-button"><X size={15}/></button></div>)}</div>
     </div>}
     <div className="selection-tray-bar">
       <p aria-live="polite" className="selection-tray-summary"><span className="selection-tray-summary-value" key={summary}>{summary}</span></p>
-      <div className="selection-tray-actions"><button type="button" aria-expanded={expanded} onClick={onToggle} className="button secondary">{expanded ? "Hide review" : "Review"}</button><button type="button" onClick={onClear} className="button ghost">Clear</button><button type="button" disabled={isLoading || isPlanning} onClick={onDelete} className="button danger">{isPlanning ? <RefreshCw size={15} className="animate-spin"/> : <Trash2 size={15}/>} {isPlanning ? "Preparing" : "Delete"}</button></div>
+      <div className="selection-tray-actions">
+        <button type="button" aria-expanded={expanded} onClick={onToggle} className="button secondary">{expanded ? "Hide review" : "Review"}</button>
+        <button type="button" onClick={onClear} className="button ghost">Clear</button>
+        {primaryKeepAction && <button type="button" disabled={isLoading || isPlanning || isSavingKeep} onClick={() => onKeep(primaryKeepAction.action)} className="button keep-action">{isSavingKeep ? <RefreshCw size={15} className="animate-spin"/> : <ShieldCheck size={15}/>} {isSavingKeep ? "Updating" : `${primaryKeepAction.label} ${primaryKeepAction.count.toLocaleString()}`}</button>}
+        {workspaceIsPrimary && <button type="button" onClick={onManageWorkspaces} className="button keep-action"><FolderKanban size={15}/>Workspaces</button>}
+        {mode !== "kept" && unkeptCount > 0 && <button type="button" disabled={isLoading || isPlanning || isSavingKeep} onClick={onDelete} className="button danger">{isPlanning ? <RefreshCw size={15} className="animate-spin"/> : <Trash2 size={15}/>} {isPlanning ? "Preparing" : `Delete ${unkeptCount.toLocaleString()}`}</button>}
+        {showMoreActions && <details className="selection-more"><summary aria-label="More selection actions" className="button ghost"><MoreHorizontal size={16}/><span>More</span></summary><div className="selection-more-menu">{showSecondaryStop && <button type="button" disabled={isSavingKeep} onClick={() => onKeep("stop")}><ShieldCheck size={14}/><span>Stop keeping {directKeepCount.toLocaleString()}</span></button>}{workspaceKeepCount > 0 && <button type="button" onClick={onManageWorkspaces}><FolderKanban size={14}/><span>Manage {workspaceKeepCount.toLocaleString()} workspace {workspaceKeepCount === 1 ? "Keep" : "Keeps"}</span></button>}</div></details>}
+      </div>
     </div>
   </section>;
 }
@@ -1364,15 +1707,45 @@ function ShortcutSheet({ onClose }) {
   return <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section role="dialog" aria-modal="true" aria-labelledby="shortcut-title" aria-describedby="shortcut-description" className="shortcut-panel"><div className="flex items-start justify-between gap-4"><div><p className="panel-label">Keyboard control</p><h2 id="shortcut-title" className="dialog-title">Keyboard shortcuts</h2><p id="shortcut-description" className="dialog-copy">Review and select sessions without leaving the keyboard.</p></div><button ref={closeRef} type="button" onClick={onClose} aria-label="Close keyboard shortcuts" className="icon-button"><X size={17}/></button></div><div className="shortcut-groups">{groups.map((group) => <section key={group.label}><h3>{group.label}</h3><dl>{group.shortcuts.map((shortcut) => <div key={shortcut.action}><dt>{shortcut.action}</dt><dd><kbd>{shortcut.keys}</kbd></dd></div>)}</dl></section>)}</div></section></div>;
 }
 
+function WorkspaceRules({ isSaving, loading, onRemove, onSearch, page, pages, records, search, setPage }) {
+  return <section aria-label="Workspace Keep rules" className="workspace-rules-view">
+    <div className="workspace-rules-toolbar">
+      <label className="workspace-rule-search"><span className="sr-only">Search workspace rules</span><Search size={15}/><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search protected folders"/>{search && <button aria-label="Clear workspace search" onClick={() => onSearch("")} type="button"><X size={14}/></button>}</label>
+    </div>
+    <div className="min-h-[360px]">
+      {loading
+        ? <SessionSkeleton/>
+        : records.length > 0
+          ? <div className="workspace-rule-list">{records.map((rule) => <article className="workspace-rule-row" key={rule.path}>
+              <div className="workspace-rule-icon"><FolderKanban size={16}/></div>
+              <div className="min-w-0"><strong title={rule.path}>{folderName(rule.path)}</strong><code title={rule.path}>{rule.path}</code><span>Added {fullDate(rule.createdAtMs)}</span></div>
+              <button className="button ghost" disabled={isSaving} onClick={() => onRemove(rule.path)} type="button">Stop keeping</button>
+            </article>)}</div>
+          : <div className="empty-state"><div><div className="empty-state-icon"><FolderKanban size={19}/></div><h3>{search ? "No workspace rules match" : "No workspace rules"}</h3><p>{search ? "Try a different folder name or path." : "Keep a workspace from any session’s details to protect its current and future sessions."}</p>{search && <button className="button secondary mt-4" onClick={() => onSearch("")} type="button">Clear search</button>}</div></div>}
+    </div>
+    <Pagination page={page} pages={pages} numbers={getPageNumbers(page, pages)} setPage={setPage}/>
+  </section>;
+}
+
 function SessionSkeleton() {
   return <div className="session-rows" aria-label="Loading sessions">{Array.from({ length: 6 }, (_, index) => <div key={index} className="session-row session-row-skeleton"><div className="skeleton size-4 rounded"/><div className="min-w-0"><div className="skeleton h-3.5 w-[min(75%,30rem)] rounded"/><div className="skeleton mt-1.5 h-3 w-[min(50%,20rem)] rounded"/></div><div className="session-row-meta"><div className="skeleton badge-skeleton"/><div className="skeleton badge-skeleton"/><div className="skeleton badge-skeleton kind-skeleton"/></div><div/></div>)}</div>;
 }
 
-function EmptyState({ hasActiveFilters, onClear }) {
-  return <div className="empty-state"><div><div className="empty-state-icon"><Search size={19}/></div><h3>{hasActiveFilters ? "No sessions match these filters" : "No sessions found"}</h3><p>{hasActiveFilters ? "Adjust the filters to see more sessions." : "Session Steward did not find any sessions in this folder."}</p>{hasActiveFilters && <button type="button" onClick={onClear} className="button secondary mt-4">Clear filters</button>}</div></div>;
+function EmptyState({ hasActiveFilters, kept = false, onClear }) {
+  const title = hasActiveFilters
+    ? "No sessions match these filters"
+    : kept
+      ? "No protected sessions"
+      : "No sessions found";
+  const copy = hasActiveFilters
+    ? "Adjust the filters to see more sessions."
+    : kept
+      ? "Sessions you Keep directly or through a workspace rule will appear here."
+      : "Session Steward did not find any sessions in this folder.";
+  return <div className="empty-state"><div><div className="empty-state-icon">{kept ? <ShieldCheck size={19}/> : <Search size={19}/>}</div><h3>{title}</h3><p>{copy}</p>{hasActiveFilters && <button type="button" onClick={onClear} className="button secondary mt-4">Clear filters</button>}</div></div>;
 }
 
-function Inspector({ onClose, onOpenSession, providerId, record }) {
+function Inspector({ isSavingKeep, onClose, onOpenSession, onToggleSessionKeep, onToggleWorkspaceKeep, providerId, record }) {
   // Both are tracked against the session they belong to, so selecting another
   // one cannot inherit the previous session's state before an effect clears it.
   const [tabChoice, setTabChoice] = useState({ id: null, tab: "timeline" });
@@ -1396,10 +1769,11 @@ function Inspector({ onClose, onOpenSession, providerId, record }) {
     {record
       ? <div><div className="inspector-content"><div className="min-w-0"><h2 className="inspector-title">{record.displayName}</h2><p className="inspector-id">{record.id}</p></div><ul aria-label="Session labels" className="inspector-chips">{[
         record.archived ? "Archived" : "Active",
+        ...(record.keep?.kept ? ["Kept"] : []),
         // The provider toggle already names the provider, so the chip stays short
         record.isSubagent ? "Subagent" : record.isFork ? "Fork" : "Primary session",
         ...(record.surface ? [record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"] : []),
-      ].map((chip) => <li className="inspector-chip" key={chip}>{chip}</li>)}</ul><dl className="inspector-details"><Detail label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail label="Tokens" value={tokenSummaryLabel(tokenState)}/><Detail label="Model" value={modelSummaryLabel(tokenState)}/><Detail label="Workspace" value={record.cwd || "Not recorded"} wide/></dl></div><InspectorTabs key={record.id} onOpenSession={onOpenSession} onSelectTab={selectTab} onTokens={setTokenReport} providerId={providerId} record={record} relatedIds={relatedIds} selectedTab={selectedTab} tokenState={tokenState}/></div>
+      ].map((chip) => <li className="inspector-chip" key={chip}>{chip}</li>)}</ul><dl className="inspector-details"><Detail label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail label="Tokens" value={tokenSummaryLabel(tokenState)}/><Detail label="Model" value={modelSummaryLabel(tokenState)}/><Detail label="Workspace" value={record.cwd || "Not recorded"} wide/></dl><section className="keep-controls" aria-label="Keep protection"><div className="keep-control-actions"><button disabled={isSavingKeep} onClick={() => onToggleSessionKeep(record)} className="button secondary" type="button"><ShieldCheck size={14}/>{record.keep?.session ? "Stop keeping session" : "Keep session"}</button>{record.cwd && <button disabled={isSavingKeep} onClick={() => onToggleWorkspaceKeep(record)} className="button ghost" type="button"><FolderKanban size={14}/>{record.keep?.workspace ? "Stop keeping workspace" : "Keep workspace"}</button>}</div><p>Kept sessions are skipped by Session Steward cleanup. {providerId === "codex" ? "Codex" : "Claude Code"} can still remove them.</p></section></div><InspectorTabs key={record.id} onOpenSession={onOpenSession} onSelectTab={selectTab} onTokens={setTokenReport} providerId={providerId} record={record} relatedIds={relatedIds} selectedTab={selectedTab} tokenState={tokenState}/></div>
       : <div className="inspector-empty"><div><div className="inspector-empty-icon"><Info size={18}/></div><h2>Select a session</h2><p>Its location, activity, and linked sessions will appear here.</p></div></div>}
   </aside></>;
 }
@@ -1861,6 +2235,7 @@ function DeletionDialog({ isDeleting, isPlanRefreshing, onCancelCleanup, onClose
         ? <><div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4"><Metric label="Sessions to remove" value={plan.sessionCount}/><Metric label="Files to remove" value={plan.transcriptCount}/><Metric label="Session files size" value={fileSize(plan.transcriptBytes)}/><Metric label="Records to remove" value={plan.relatedRecordCount}/></div>
           {!operation && <div className="dialog-note"><HardDrive size={14}/><p>About {fileSize(plan.estimatedBackupBytes)} of temporary free space is needed for a recovery backup. It is removed after cleanup is verified.</p></div>}
           {plan.childCount > 0 && <p className="dialog-information"><GitBranch size={13}/><span>{plan.childCount} linked {plan.childCount === 1 ? "session is" : "sessions are"} included.{plan.newestLinkedActivityAtMs ? ` Newest linked activity was ${age(plan.newestLinkedActivityAtMs)}.` : " Linked activity was not recorded."}</span></p>}
+          {plan.skippedProtectionCount > 0 && <p className="dialog-information"><ShieldCheck size={13}/><span>{plan.skippedProtectionCount} kept {plan.skippedProtectionCount === 1 ? "selection was" : "selections were"} skipped. Keep affects only Session Steward cleanup.</span></p>}
           {plan.warnings?.map((warning) => <p key={warning} className="dialog-information"><AlertTriangle size={13}/><span>{warning}</span></p>)}</>
         : <div className="metric-skeleton skeleton"/>}
       {isPlanRefreshing && <div className="dialog-plan-loading" role="status"><RefreshCw size={16} className="animate-spin"/><span>Updating cleanup details</span></div>}
@@ -1869,7 +2244,7 @@ function DeletionDialog({ isDeleting, isPlanRefreshing, onCancelCleanup, onClose
     {confirmingRestore && operation?.canRestore && <div role="alert" className="dialog-confirmation message-warning"><p>Restore these sessions?</p><span>This replaces the affected {providerName} session data with the recovery backup. Session Steward saves the current files first.</span></div>}
     {confirmingBackupDelete && operation?.canDeleteBackup && <div role="alert" className="dialog-confirmation message-danger"><p>Delete this recovery backup?</p><span>You will no longer be able to restore these sessions from this backup.</span></div>}
     {!operation && <div className="dialog-information close-session-note"><AlertTriangle size={17}/><p><strong>Close selected {providerName} sessions first.</strong> Session Steward blocks sessions it can identify as running; closing them also prevents last-second changes.</p></div>}
-    <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">{!operation && <button disabled={isDeleting} onClick={onClose} className="button ghost">Cancel</button>}{!operation && <button disabled={isDeleting || isPlanRefreshing || !plan} onClick={onDelete} className="button danger min-w-40"><Trash2 size={15}/>{isDeleting ? "Starting cleanup…" : "Delete selected sessions"}</button>}{active && operation.canCancel && <button disabled={operation.cancelRequested} onClick={onCancelCleanup} className="button ghost">{operation.cancelRequested ? "Cancellation requested" : "Cancel cleanup"}</button>}{operation && !active && !confirmingRestore && !confirmingBackupDelete && <button onClick={onClose} className="button secondary">{operation.canRestore ? "Keep backup" : "Close"}</button>}{operation?.canDeleteBackup && !confirmingRestore && !confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingBackupDelete(true)} className="button ghost">Delete backup</button>}{operation?.canRestore && !confirmingRestore && !confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingRestore(true)} className="button primary">Restore backup</button>}{confirmingRestore && <button disabled={isDeleting} onClick={() => setConfirmingRestore(false)} className="button ghost">Cancel</button>}{confirmingRestore && <button disabled={isDeleting} onClick={onRestore} className="button primary">{isDeleting ? "Restoring…" : "Restore sessions"}</button>}{confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingBackupDelete(false)} className="button ghost">Cancel</button>}{confirmingBackupDelete && <button disabled={isDeleting} onClick={onDeleteBackup} className="button danger">{isDeleting ? "Deleting…" : "Delete backup"}</button>}</div>
+    <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">{!operation && <button disabled={isDeleting} onClick={onClose} className="button ghost">Cancel</button>}{!operation && <button disabled={isDeleting || isPlanRefreshing || !plan || plan.sessionCount === 0} onClick={onDelete} className="button danger min-w-40"><Trash2 size={15}/>{isDeleting ? "Starting cleanup…" : plan?.sessionCount === 0 ? "Nothing to delete" : `Delete ${plan.sessionCount.toLocaleString()} ${plan.sessionCount === 1 ? "session" : "sessions"}`}</button>}{active && operation.canCancel && <button disabled={operation.cancelRequested} onClick={onCancelCleanup} className="button ghost">{operation.cancelRequested ? "Cancellation requested" : "Cancel cleanup"}</button>}{operation && !active && !confirmingRestore && !confirmingBackupDelete && <button onClick={onClose} className="button secondary">{operation.canRestore ? "Keep backup" : "Close"}</button>}{operation?.canDeleteBackup && !confirmingRestore && !confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingBackupDelete(true)} className="button ghost">Delete backup</button>}{operation?.canRestore && !confirmingRestore && !confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingRestore(true)} className="button primary">Restore backup</button>}{confirmingRestore && <button disabled={isDeleting} onClick={() => setConfirmingRestore(false)} className="button ghost">Cancel</button>}{confirmingRestore && <button disabled={isDeleting} onClick={onRestore} className="button primary">{isDeleting ? "Restoring…" : "Restore sessions"}</button>}{confirmingBackupDelete && <button disabled={isDeleting} onClick={() => setConfirmingBackupDelete(false)} className="button ghost">Cancel</button>}{confirmingBackupDelete && <button disabled={isDeleting} onClick={onDeleteBackup} className="button danger">{isDeleting ? "Deleting…" : "Delete backup"}</button>}</div>
   </section></div>;
 }
 
