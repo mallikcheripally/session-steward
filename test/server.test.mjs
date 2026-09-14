@@ -1052,7 +1052,8 @@ test("browser workspace Keep rules are searched and paginated", async (context) 
     "Origin": baseUrl,
     "X-Session-Steward-Token": server.token,
   };
-  for (const workspace of ["/work/alpha", "/work/beta", "/work/gamma"]) {
+  const workspaceRoot = path.join(path.parse(fixture.workspace).root, "work");
+  for (const workspace of ["alpha", "beta", "gamma"].map((name) => path.join(workspaceRoot, name))) {
     const response = await fetch(`${baseUrl}/api/protections`, {
       body: JSON.stringify({ kind: "workspace", workspace }),
       headers,
@@ -1066,5 +1067,5 @@ test("browser workspace Keep rules are searched and paginated", async (context) 
   assert.equal(firstPage.pageCount, 2);
   assert.equal(firstPage.records.length, 2);
   const searched = await fetch(`${baseUrl}/api/protections?provider=codex&kind=workspaces&search=beta`).then((response) => response.json());
-  assert.deepEqual(searched.records.map((item) => item.path), ["/work/beta"]);
+  assert.deepEqual(searched.records.map((item) => item.path), [path.join(workspaceRoot, "beta")]);
 });

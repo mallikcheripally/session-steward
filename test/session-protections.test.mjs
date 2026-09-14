@@ -92,22 +92,26 @@ test("multiple session Keeps are saved atomically without duplicates", async (co
 test("compiled Keep matching uses direct ID lookup and the closest workspace ancestor", async (context) => {
   const configDirectory = await temporaryDirectory(context);
   const store = createSessionProtectionStore({ configDirectory });
-  await store.keepSession({ providerHome: "/home/codex", providerId: "codex", sessionId: "direct" });
-  await store.keepWorkspace({ workspace: "/work" });
-  await store.keepWorkspace({ workspace: "/work/product" });
+  const root = path.parse(configDirectory).root;
+  const providerHome = path.join(root, "home", "codex");
+  const workspaceRoot = path.join(root, "work");
+  const productWorkspace = path.join(workspaceRoot, "product");
+  await store.keepSession({ providerHome, providerId: "codex", sessionId: "direct" });
+  await store.keepWorkspace({ workspace: workspaceRoot });
+  await store.keepWorkspace({ workspace: productWorkspace });
   const match = compileSessionProtectionMatcher({
-    providerHome: "/home/codex",
+    providerHome,
     providerId: "codex",
     snapshot: await store.list(),
   });
 
-  assert.deepEqual(match({ cwd: "/elsewhere", id: "direct" }).reasons, ["session"]);
-  assert.deepEqual(match({ cwd: "/work/product/app", id: "workspace" }), {
+  assert.deepEqual(match({ cwd: path.join(root, "elsewhere"), id: "direct" }).reasons, ["session"]);
+  assert.deepEqual(match({ cwd: path.join(productWorkspace, "app"), id: "workspace" }), {
     kept: true,
     reasons: ["workspace"],
     session: false,
     workspace: true,
-    workspacePath: "/work/product",
+    workspacePath: productWorkspace,
   });
 });
 
@@ -124,9 +128,10 @@ test("bulk Keep removal is atomic", async (context) => {
 test("workspace rules are searched and paginated without returning the whole rule set", async (context) => {
   const configDirectory = await temporaryDirectory(context);
   await fs.mkdir(configDirectory, { recursive: true });
+  const workspaceRoot = path.join(path.parse(configDirectory).root, "work");
   const workspaces = Array.from({ length: 10_000 }, (_, index) => ({
     createdAtMs: index,
-    path: `/work/project-${String(index).padStart(5, "0")}`,
+    path: path.join(workspaceRoot, `project-${String(index).padStart(5, "0")}`),
   }));
   await fs.writeFile(path.join(configDirectory, "protections.json"), JSON.stringify({
     revision: 1,
@@ -140,9 +145,9 @@ test("workspace rules are searched and paginated without returning the whole rul
   assert.equal(page.total, 10_000);
   assert.equal(page.pageCount, 400);
   assert.equal(page.records.length, 25);
-  assert.equal(page.records[0].path, "/work/project-09974");
+  assert.equal(page.records[0].path, path.join(workspaceRoot, "project-09974"));
 
   const searched = await store.listWorkspaceRules({ search: "project-00042" });
   assert.equal(searched.total, 1);
-  assert.equal(searched.records[0].path, "/work/project-00042");
+  assert.equal(searched.records[0].path, path.join(workspaceRoot, "project-00042"));
 });
