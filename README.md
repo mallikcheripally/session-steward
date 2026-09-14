@@ -19,6 +19,7 @@ Session Steward makes session cleanup safer by finding those records, showing wh
 - See session counts and the storage used by recognized session files.
 - Find sessions inactive for 30, 60, or 90 days.
 - Filter active or archived sessions by workspace, name, or session ID.
+- Mark important sessions or workspaces Keep so cleanup skips them.
 - Inspect session details and affected records before deletion.
 - Read a session timeline of what you asked, what changed, and which commands ran.
 - See how many tokens a session used, split into fresh input, cached input, cache writes, and output.
@@ -35,7 +36,11 @@ Session Steward makes session cleanup safer by finding those records, showing wh
 - Thorough cleanup is unavailable when the detected storage format is not supported.
 - Cleanup stays local and does not upload session contents.
 
-At startup, Session Steward may contact the public npm registry to check for a newer version.
+### Keep important sessions
+
+Mark a session or workspace Keep and Session Steward skips it during manual and scheduled cleanup. A workspace Keep also covers descendant folders and future sessions there.
+
+It protects against Session Steward cleanup only. Codex or Claude Code can still remove the data.
 
 ### Session Steward does not remove
 
@@ -45,6 +50,8 @@ At startup, Session Steward may contact the public npm registry to check for a n
 - Sessions outside the reviewed cleanup plan
 - Conversations stored in your ChatGPT or Claude account
 - Claude Code worktrees, branches, repositories, remote sessions, SSH sessions, or Cowork data
+
+At startup, Session Steward may contact the public npm registry to check for a newer version.
 
 ## Install and get started
 
@@ -204,10 +211,8 @@ backups
 
 Run `inactive`, `archive`, or `workspace` without a value to clear that filter.
 
-Use `keep <selector>` for one session or `keep-workspace <path>` for a workspace
-and its descendants. Kept sessions are skipped by manual and scheduled Session
-Steward cleanup. This does not stop Codex or Claude Code from removing their own
-session data. Use `unkeep` or `unkeep-workspace` to remove the protection.
+`keep` and `unkeep` accept session selectors. `keep-workspace` and
+`unkeep-workspace` accept a full path.
 
 `backups` lists recovery backups retained after an interrupted or unsuccessful cleanup. Use `restore <number>` to restore one, or `delete-backup <number>` to remove it permanently. Both actions require an explicit confirmation.
 
@@ -246,9 +251,6 @@ You can then ask things like:
 Cleanup uses the same local backup and verification checks as the browser and
 terminal. Codex or Claude Code asks for approval before cleanup, restore, or
 schedule changes.
-
-Keep is stored only in Session Steward. It uses session IDs and workspace paths,
-does not index transcripts, and cannot prevent provider-owned deletion.
 
 Scheduled cleanup continues in the background after you close Codex or Claude
 Code. You can ask to pause, resume, run, change, or remove a schedule. Before
