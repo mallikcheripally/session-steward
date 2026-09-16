@@ -49,6 +49,15 @@ jobs:
       - name: Inspect package contents
         run: npm pack --dry-run
 
+      - name: Smoke test packed MCP launcher
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          package_tarball="$(npm pack --silent | tail -n 1)"
+          install_directory="$(mktemp -d)"
+          npm install --prefix "$install_directory" "./$package_tarball"
+          node test/packed-mcp-smoke.mjs "$install_directory/node_modules/.bin/session-steward"
+
       - name: Install Windows command shims
         if: runner.os == 'Windows'
         shell: pwsh

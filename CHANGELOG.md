@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.1] - 2026-09-14
+
+### Added
+
+- Added Official MCP Registry metadata and a package-name MCP launch command for registry clients.
+
 ## [0.11.0] - 2026-09-14
 
 ### Added
@@ -168,6 +174,7 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.11.1]: https://github.com/mallikcheripally/session-steward/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/mallikcheripally/session-steward/compare/v0.10.3...v0.11.0
 [0.10.3]: https://github.com/mallikcheripally/session-steward/compare/v0.10.2...v0.10.3
 [0.10.2]: https://github.com/mallikcheripally/session-steward/compare/v0.10.1...v0.10.2

@@ -1,7 +1,8 @@
 {
   "name": "session-steward",
-  "version": "0.11.0",
-  "description": "Codex and Claude Code session manager - browse, back up, and delete old sessions. Local browser UI + CLI.",
+  "version": "0.11.1",
+  "mcpName": "io.github.mallikcheripally/session-steward",
+  "description": "Codex and Claude Code session manager - browse and delete old sessions. Browser UI + CLI + MCP",
   "license": "MIT",
   "author": "Mallik Cheripally",
   "type": "module",
@@ -22,17 +23,19 @@
     "codex-cli",
     "codex-sessions",
     "codex-cleanup",
+    "codex-session-manager",
     "openai-codex",
     "chatgpt-desktop",
     "claude-code",
     "claude-code-sessions",
     "claude-code-cleanup",
+    "claude-code-session-manager",
     "claude-desktop",
     "session-cleanup",
     "session-history",
     "session-manager",
-    "disk-space",
-    "disk-cleanup"
+    "automatic-session-cleanup",
+    "mcp-server"
   ],
   "os": [
     "darwin",

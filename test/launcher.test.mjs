@@ -30,3 +30,17 @@ test("the browser launcher reports the installed version", async () => {
 
   assert.equal(output.trim(), manifest.version);
 });
+
+test("the package launcher exposes the MCP subcommand help", async () => {
+  const output = await runLauncher(["mcp", "--help"]);
+
+  assert.match(output, /^Usage: session-steward-mcp/u);
+  assert.match(output, /Run Session Steward's MCP server over stdio/u);
+});
+
+test("the package launcher forwards MCP options", async () => {
+  const output = await runLauncher(["mcp", "--version"]);
+  const manifest = JSON.parse(await fs.readFile(path.join(repositoryRoot, "package.json"), "utf8"));
+
+  assert.equal(output.trim(), manifest.version);
+});
