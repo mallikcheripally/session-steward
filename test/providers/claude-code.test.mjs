@@ -17,7 +17,9 @@ for (const layout of ["current", "alternate"]) {
     assert.equal(compatibility.builtFor.claudeCli.includes("2.1.237"), true);
     assert.equal(compatibility.builtFor.claudeDesktop.includes("1.40609.0"), true);
     assert.equal(compatibility.builtFor.claudeCli.includes("2.1.267"), true);
+    assert.equal(compatibility.builtFor.claudeCli.includes("2.1.280"), true);
     assert.equal(compatibility.builtFor.claudeDesktop.includes("1.49585.0"), true);
+    assert.equal(compatibility.builtFor.claudeDesktop.includes("2.2553.1"), true);
     const listed = await claude.listSessions({ ...fixture, page: 1, pageSize: 25 });
     assert.equal(listed.total, 3);
     const store = await claude.loadDeletionStore({ ...fixture, recordIds: [fixture.cliId] });
@@ -54,6 +56,7 @@ test("Claude filters records before pagination", async (context) => {
 test("Claude reports unknown locations as partial and leaves them untouched during thorough cleanup", async (context) => {
   const fixture = await createClaudeHomeFixture();
   context.after(() => removeClaudeHomeFixture(fixture));
+  await fs.mkdir(path.join(fixture.claudeHome, "image-cache"));
   const unknownDirectory = path.join(fixture.claudeHome, "future-session-data");
   await fs.mkdir(unknownDirectory);
   await fs.writeFile(path.join(unknownDirectory, "record.json"), "{}\n");

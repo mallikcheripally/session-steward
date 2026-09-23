@@ -192,9 +192,11 @@ Archiving a Claude Desktop session does not delete it. It remains available unti
 ## Update or uninstall
 
 ```bash
-npm install --global session-steward@latest
+session-steward update
 npm uninstall --global session-steward
 ```
+
+If npm needs root access, the update command asks before retrying with `sudo`.
 
 Uninstalling does not remove provider sessions, recovery backups, or saved folder preferences.
 

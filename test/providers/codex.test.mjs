@@ -21,14 +21,34 @@ for (const layout of ["state_5", "state_6"]) {
   test(`Codex ${layout} layout supports listing, inspection, cleanup, and restore`, async (context) => {
     const fixture = await createCodexHomeFixture({ layout });
     context.after(() => removeCodexHomeFixture(fixture.codexHome));
+    const attachmentTable = layout === "state_5" ? "thread_artifacts" : "thread_attachments";
+    const attachmentTypeColumn = layout === "state_5" ? "artifact_type" : "attachment_type";
+    const database = new DatabaseSync(fixture.stateDatabasePath);
+    try {
+      database.exec(`create table ${attachmentTable} (
+        id text primary key,
+        thread_id text not null references threads(id) on delete cascade,
+        ${attachmentTypeColumn} text not null,
+        identity_key text not null,
+        payload text not null,
+        created_at integer not null
+      )`);
+      const insert = database.prepare(`insert into ${attachmentTable} (id, thread_id, ${attachmentTypeColumn}, identity_key, payload, created_at) values (?, ?, 'test', ?, '{}', 1)`);
+      insert.run("parent-attachment", fixtureSessionIds.parent, "parent");
+      insert.run("standalone-attachment", fixtureSessionIds.standalone, "standalone");
+    } finally {
+      database.close();
+    }
     const compatibility = await codex.diagnoseStorageCompatibility({ codexHome: fixture.codexHome });
     assert.equal(compatibility.status, "ready");
     assert.equal(compatibility.builtFor.codexCli.includes("0.148.0"), true);
     assert.equal(compatibility.builtFor.chatgptDesktop.includes("26.825.41651"), true);
     assert.equal(compatibility.builtFor.codexCli.includes("0.153.4"), true);
     assert.equal(compatibility.builtFor.codexCli.includes("0.154.0"), true);
+    assert.equal(compatibility.builtFor.codexCli.includes("0.156.1"), true);
     assert.equal(compatibility.builtFor.chatgptDesktop.includes("26.903.61454"), true);
     assert.equal(compatibility.builtFor.chatgptDesktop.includes("26.903.71938"), true);
+    assert.equal(compatibility.builtFor.chatgptDesktop.includes("26.917.51856"), true);
     assert.equal(compatibility.resolvedDatabases.state.primary.filename, `${layout}.sqlite`);
     const listed = await codex.listSessions({
       codexHome: fixture.codexHome,
@@ -46,10 +66,22 @@ for (const layout of ["state_5", "state_6"]) {
       recordIds: [fixtureSessionIds.parent],
     });
     const plan = await codex.planSessionDeletion({ recordIds: [fixtureSessionIds.parent], store });
+    const originalFingerprint = await codex.fingerprintSessionDeletion({ plan, scope: "core", store });
+    const changedDatabase = new DatabaseSync(fixture.stateDatabasePath);
+    try {
+      changedDatabase.prepare(`update ${attachmentTable} set payload = ? where id = ?`)
+        .run('{"changed":true}', "parent-attachment");
+    } finally {
+      changedDatabase.close();
+    }
+    assert.notEqual(await codex.fingerprintSessionDeletion({ plan, scope: "core", store }), originalFingerprint);
     const result = await codex.executeSessionDeletion({ plan, scope: "core", store });
     assert.equal((await codex.verifySessionDeletion({ plan, scope: "core", store })).complete, true);
+    assert.equal(queryRows(fixture.stateDatabasePath, `select count(*) as count from ${attachmentTable} where thread_id = ?`, [fixtureSessionIds.parent])[0].count, 0);
+    assert.equal(queryRows(fixture.stateDatabasePath, `select count(*) as count from ${attachmentTable} where thread_id = ?`, [fixtureSessionIds.standalone])[0].count, 1);
     await codex.restoreSessionDeletionBackup({ backupDirectory: result.backupDirectory, codexHome: fixture.codexHome });
     assert.equal((await codex.getSessionRecord({ codexHome: fixture.codexHome, id: fixtureSessionIds.parent })).id, fixtureSessionIds.parent);
+    assert.equal(queryRows(fixture.stateDatabasePath, `select count(*) as count from ${attachmentTable} where thread_id = ?`, [fixtureSessionIds.parent])[0].count, 1);
     const deepStore = await codex.loadDeletionStore({
       codexHome: fixture.codexHome,
       recordIds: [fixtureSessionIds.standalone],
@@ -57,8 +89,10 @@ for (const layout of ["state_5", "state_6"]) {
     const deepPlan = await codex.planSessionDeletion({ recordIds: [fixtureSessionIds.standalone], store: deepStore });
     const deepResult = await codex.executeSessionDeletion({ plan: deepPlan, scope: "deep", store: deepStore });
     assert.equal((await codex.verifySessionDeletion({ plan: deepPlan, scope: "deep", store: deepStore })).complete, true);
+    assert.equal(queryRows(fixture.stateDatabasePath, `select count(*) as count from ${attachmentTable} where thread_id = ?`, [fixtureSessionIds.standalone])[0].count, 0);
     await codex.restoreSessionDeletionBackup({ backupDirectory: deepResult.backupDirectory, codexHome: fixture.codexHome });
     assert.equal((await codex.getSessionRecord({ codexHome: fixture.codexHome, id: fixtureSessionIds.standalone })).id, fixtureSessionIds.standalone);
+    assert.equal(queryRows(fixture.stateDatabasePath, `select count(*) as count from ${attachmentTable} where thread_id = ?`, [fixtureSessionIds.standalone])[0].count, 1);
   });
 }
 
@@ -786,7 +820,7 @@ test("deep cleanup backs up, removes, and verifies only the selected family", as
   ));
   assert.deepEqual(new Set(operation.ids), new Set(plan.ids));
   assert.equal(operation.version, 3);
-  assert.equal(operation.profileId, "codex-local-store-2026-08");
+  assert.equal(operation.profileId, "codex-local-store-2026-09");
   assert.equal(operation.compatibilityStatus, "ready");
   assert.equal(operation.resolvedDatabases.state.primary.filename, "state_5.sqlite");
   assert.equal(operation.resolvedDatabases.queue.primary.filename, "queue_1.sqlite");
@@ -846,7 +880,12 @@ test("deep cleanup removes memory jobs and queues forgetting for selected memory
   } finally {
     database.close();
   }
+  const memoryV2DatabasePath = path.join(fixture.codexHome, "memories_v2_1.sqlite");
+  await copyFile(memoryDatabasePath, memoryV2DatabasePath);
   codex.invalidateSessionCache({ codexHome: fixture.codexHome });
+  const compatibility = await codex.diagnoseStorageCompatibility({ codexHome: fixture.codexHome });
+  assert.equal(compatibility.status, "ready");
+  assert.equal(compatibility.resolvedDatabases.memoriesV2.primary.filename, "memories_v2_1.sqlite");
 
   const store = await codex.loadDeletionStore({
     codexHome: fixture.codexHome,
@@ -856,44 +895,48 @@ test("deep cleanup removes memory jobs and queues forgetting for selected memory
     recordIds: [fixtureSessionIds.parent],
     store,
   });
-  assert.equal(plan.memoryOutputRowCount, 2);
-  assert.equal(plan.memoryJobRowCount, 2);
-  assert.equal(plan.memoryRowCount, 4);
-  assert.deepEqual(plan.memoryConsolidations, [{
-    databasePath: memoryDatabasePath,
+  assert.equal(plan.memoryOutputRowCount, 4);
+  assert.equal(plan.memoryJobRowCount, 4);
+  assert.equal(plan.memoryRowCount, 8);
+  assert.deepEqual(plan.memoryConsolidations, [memoryDatabasePath, memoryV2DatabasePath].map((databasePath) => ({
+    databasePath,
     inputWatermark: 100,
-  }]);
+  })));
 
   const result = await codex.executeSessionDeletion({ plan, scope: "deep", store });
   assert.equal((await codex.verifySessionDeletion({ plan, scope: "deep", store })).complete, true);
-  assert.equal(queryRows(
-    memoryDatabasePath,
-    "select count(*) as count from stage1_outputs where thread_id in (?, ?)",
-    [fixtureSessionIds.parent, fixtureSessionIds.child],
-  )[0].count, 0);
-  assert.equal(queryRows(
-    memoryDatabasePath,
-    "select count(*) as count from jobs where kind = 'memory_stage1' and job_key in (?, ?)",
-    [fixtureSessionIds.parent, fixtureSessionIds.child],
-  )[0].count, 0);
-  const globalJob = queryRows(
-    memoryDatabasePath,
-    "select status, retry_remaining, input_watermark from jobs where kind = 'memory_consolidate_global' and job_key = 'global'",
-  )[0];
-  assert.equal(globalJob.status, "pending");
-  assert.equal(globalJob.retry_remaining, 3);
-  assert.equal(globalJob.input_watermark > 100, true);
+  for (const databasePath of [memoryDatabasePath, memoryV2DatabasePath]) {
+    assert.equal(queryRows(
+      databasePath,
+      "select count(*) as count from stage1_outputs where thread_id in (?, ?)",
+      [fixtureSessionIds.parent, fixtureSessionIds.child],
+    )[0].count, 0);
+    assert.equal(queryRows(
+      databasePath,
+      "select count(*) as count from jobs where kind = 'memory_stage1' and job_key in (?, ?)",
+      [fixtureSessionIds.parent, fixtureSessionIds.child],
+    )[0].count, 0);
+    const globalJob = queryRows(
+      databasePath,
+      "select status, retry_remaining, input_watermark from jobs where kind = 'memory_consolidate_global' and job_key = 'global'",
+    )[0];
+    assert.equal(globalJob.status, "pending");
+    assert.equal(globalJob.retry_remaining, 3);
+    assert.equal(globalJob.input_watermark > 100, true);
+  }
 
   await codex.restoreSessionDeletionBackup({
     backupDirectory: result.backupDirectory,
     codexHome: fixture.codexHome,
   });
-  assert.equal(queryRows(memoryDatabasePath, "select count(*) as count from stage1_outputs")[0].count, 3);
-  assert.equal(queryRows(memoryDatabasePath, "select count(*) as count from jobs")[0].count, 4);
-  assert.deepEqual({ ...queryRows(
-    memoryDatabasePath,
-    "select status, retry_remaining, input_watermark from jobs where kind = 'memory_consolidate_global' and job_key = 'global'",
-  )[0] }, { input_watermark: 100, retry_remaining: 1, status: "done" });
+  for (const databasePath of [memoryDatabasePath, memoryV2DatabasePath]) {
+    assert.equal(queryRows(databasePath, "select count(*) as count from stage1_outputs")[0].count, 3);
+    assert.equal(queryRows(databasePath, "select count(*) as count from jobs")[0].count, 4);
+    assert.deepEqual({ ...queryRows(
+      databasePath,
+      "select status, retry_remaining, input_watermark from jobs where kind = 'memory_consolidate_global' and job_key = 'global'",
+    )[0] }, { input_watermark: 100, retry_remaining: 1, status: "done" });
+  }
 });
 
 test("cleanup cancellation stops at a safe boundary", async (context) => {

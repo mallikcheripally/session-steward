@@ -1,6 +1,6 @@
 {
   "name": "session-steward",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "mcpName": "io.github.mallikcheripally/session-steward",
   "description": "Codex and Claude Code session manager - browse and delete old sessions. Browser UI + CLI + MCP",
   "license": "MIT",
