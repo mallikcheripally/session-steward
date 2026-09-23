@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+## [0.11.2] - 2026-09-23
 
 ### Added
 
 - Added `session-steward update` with version output and a sudo prompt when needed.
+
+### Changed
+
+- Updated compatibility coverage for current Codex and Claude releases, including Codex memory v2 storage.
 
 ## [0.11.1] - 2026-09-14
 
@@ -180,6 +184,7 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.11.2]: https://github.com/mallikcheripally/session-steward/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/mallikcheripally/session-steward/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/mallikcheripally/session-steward/compare/v0.10.3...v0.11.0
 [0.10.3]: https://github.com/mallikcheripally/session-steward/compare/v0.10.2...v0.10.3
