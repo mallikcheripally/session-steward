@@ -13,6 +13,20 @@ assertSupportedNode();
 if (process.argv[2] === "mcp") {
   process.argv.splice(2, 1);
   await import("./session-steward-mcp.mjs");
+} else if (process.argv[2] === "update") {
+  process.argv.splice(2, 1);
+  if (process.argv.length !== 2) {
+    process.stderr.write("Usage: session-steward update\n");
+    process.exitCode = 1;
+  } else {
+    const { updateSessionSteward } = await import("../lib/self-update.mjs");
+    try {
+      process.exitCode = await updateSessionSteward();
+    } catch (error) {
+      process.stderr.write(`Could not run the update: ${error.message}\n`);
+      process.exitCode = 1;
+    }
+  }
 } else {
   await startBrowser();
 }
@@ -33,9 +47,11 @@ async function startBrowser() {
   if (values.help) {
     process.stdout.write(`Usage: session-steward [options]
        session-steward mcp [options]
+       session-steward update
 
 Commands:
   mcp                  Run the MCP server over stdio
+  update               Install the latest version with npm
 
 Options:
   --codex-home <path>  Use a custom Codex session folder

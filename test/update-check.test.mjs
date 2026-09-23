@@ -49,7 +49,7 @@ test("a newer stable npm release produces one update notice", async () => {
   assert.ok(request.options.signal instanceof AbortSignal);
   assert.equal(
     formatUpdateNotice(update),
-    "Session Steward 1.5.0 is available. Update with: npm install -g session-steward@latest",
+    "Session Steward 1.5.0 is available. Update with: session-steward update",
   );
 });
 

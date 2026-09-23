@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added `session-steward update` with version output and a sudo prompt when needed.
+
 ## [0.11.1] - 2026-09-14
 
 ### Added

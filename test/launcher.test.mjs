@@ -22,6 +22,7 @@ test("the browser launcher shows help without starting the server", async () => 
 
   assert.match(output, /^Usage: session-steward/u);
   assert.match(output, /--codex-home/u);
+  assert.match(output, /session-steward update/u);
 });
 
 test("the browser launcher reports the installed version", async () => {
