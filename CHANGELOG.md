@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.0] - 2026-09-24
+
+### Added
+
+- Manage automatic cleanup schedules in the browser, including schedules created through MCP. Create, edit, pause, run, or remove a schedule, and start or stop background runs.
+
 ## [0.11.2] - 2026-09-23
 
 ### Added
@@ -184,6 +190,7 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.12.0]: https://github.com/mallikcheripally/session-steward/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/mallikcheripally/session-steward/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/mallikcheripally/session-steward/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/mallikcheripally/session-steward/compare/v0.10.3...v0.11.0

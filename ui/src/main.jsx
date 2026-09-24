@@ -6,6 +6,7 @@ import {
   Bot,
   Check,
   CheckCircle2,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -25,6 +26,8 @@ import {
   X,
 } from "lucide-react";
 import { sessionDateGroupForSort, sessionDayLabel } from "./date-groups.mjs";
+import CleanupScope from "./cleanup-scope.jsx";
+import ScheduledCleanupPage from "./scheduled-cleanup.jsx";
 import {
   newestSessionEvents,
   SESSION_EVENT_BATCH_SIZE,
@@ -38,6 +41,8 @@ const MAX_PAGE_LINKS = 5;
 const PLAN_REVIEW_REQUIRED = "DELETION_PLAN_REVIEW_REQUIRED";
 const SESSION_EVENT_COVERAGE_THRESHOLD = 90;
 const ALL_WORKSPACES = "__all_workspaces__";
+const AUTOMATIC_CLEANUP_PATH = "/automatic-cleanup";
+const CLEANUP_VIEW_PATHS = new Set([AUTOMATIC_CLEANUP_PATH, "/scheduled-cleanup"]);
 
 const FILTER_REGISTRY = [
   {
@@ -233,6 +238,7 @@ function getSessionKind(record) {
 }
 
 function App() {
+  const [view, setView] = useState(() => CLEANUP_VIEW_PATHS.has(window.location.pathname.replace(/\/$/u, "")) ? "schedules" : "sessions");
   const [activeProviderId, setActiveProviderId] = useState(null);
   const [configReady, setConfigReady] = useState(false);
   const [providers, setProviders] = useState({});
@@ -296,6 +302,24 @@ function App() {
   const selectPageRef = useRef(null);
   const shouldScrollCursor = useRef(false);
   const keyboardStateRef = useRef(null);
+
+  useEffect(() => {
+    const onPopState = () => setView(CLEANUP_VIEW_PATHS.has(window.location.pathname.replace(/\/$/u, "")) ? "schedules" : "sessions");
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const navigateTo = (nextView, event) => {
+    if (dialog || isDeleting) {
+      event.preventDefault();
+      return;
+    }
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const nextPath = nextView === "schedules" ? AUTOMATIC_CLEANUP_PATH : "/";
+    if (window.location.pathname !== nextPath) window.history.pushState(null, "", nextPath);
+    setView(nextView);
+  };
 
   const {
     archiveStatus,
@@ -1086,6 +1110,7 @@ function App() {
   };
 
   keyboardStateRef.current = {
+    view,
     clearSelection,
     closeInspector,
     cursorIndex,
@@ -1112,6 +1137,7 @@ function App() {
   useEffect(() => {
     const handleKeyDown = (event) => {
       const state = keyboardStateRef.current;
+      if (state.view !== "sessions") return;
       if (state.dialog) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (state.isDeleting || state.isPlanning || state.isSavingProviderHome) return;
@@ -1207,15 +1233,35 @@ function App() {
 
   return <main className="app-shell min-h-screen text-primary">
     <div className={`relative mx-auto max-w-[1380px] px-4 py-5 sm:px-6 sm:py-8 lg:px-8 ${selected.size > 0 ? "has-selection-tray" : ""} ${selectionTrayExpanded ? "has-selection-tray-expanded" : ""}`}>
-      <header className="mb-5 flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
-        <div className="flex items-center gap-3.5">
-          <div className="brand-mark"><ShieldCheck size={23}/></div>
-          <div>
-            <p className="brand-kicker">Local AI Session Manager</p>
-            <h1 className="brand-title">Session Steward</h1>
+      <header className="app-header mb-5">
+        <div className="app-header-leading">
+          <div className="flex items-center gap-3.5">
+            <div className="brand-mark"><ShieldCheck size={23}/></div>
+            <div>
+              <p className="brand-kicker">Local AI Session Manager</p>
+              <h1 className="brand-title">Session Steward</h1>
+            </div>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <nav aria-label="Views" className="page-switch">
+          <a aria-current={view === "sessions" ? "page" : undefined} aria-disabled={dialog || isDeleting ? "true" : undefined} href="/" onClick={(event) => navigateTo("sessions", event)}><Database size={14}/> Sessions</a>
+          <a aria-current={view === "schedules" ? "page" : undefined} aria-disabled={dialog || isDeleting ? "true" : undefined} href={AUTOMATIC_CLEANUP_PATH} onClick={(event) => navigateTo("schedules", event)}><CalendarDays size={14}/> Automatic cleanup</a>
+        </nav>
+      </header>
+
+      {view === "sessions" && <div className="context-and-view">
+        <ProviderHomeControl
+          editing={editingProviderHome}
+          isSaving={isSavingProviderHome}
+          onCancel={() => { setEditingProviderHome(false); setProviderHomeDraft(providerSettings.home); }}
+          onChange={setProviderHomeDraft}
+          onEdit={() => { setProviderHomeDraft(providerSettings.home); setEditingProviderHome(true); }}
+          onReset={resetProviderHome}
+          onSubmit={saveProviderHome}
+          provider={providerSettings}
+          value={providerHomeDraft}
+        />
+        <div aria-label="Session controls" className="app-header-actions">
           <div className="provider-switch" aria-label="Session provider">{Object.entries(providers).map(([id, provider]) => {
             const ProviderIcon = PROVIDER_ICONS[id];
             return <button key={id} type="button" disabled={isDeleting || isPlanning} aria-pressed={activeProviderId === id} onClick={() => switchProvider(id)}><ProviderIcon size={14}/><span>{provider.displayName}</span></button>;
@@ -1223,24 +1269,14 @@ function App() {
           <button disabled={isRefreshing} onClick={refreshAll} className="icon-button refresh-button" aria-label={isRefreshing ? "Refreshing sessions" : "Refresh sessions"} title="Refresh sessions"><RefreshCw size={16} className={isRefreshing ? "animate-spin" : undefined}/></button>
           <CompatibilityControl compatibilityRef={compatibilityRef} compatibility={compatibility} expanded={showCompatibilityDetails} onToggle={() => setShowCompatibilityDetails((current) => !current)} onClose={() => setShowCompatibilityDetails(false)}/>
         </div>
-      </header>
-
-      <ProviderHomeControl
-        editing={editingProviderHome}
-        isSaving={isSavingProviderHome}
-        onCancel={() => { setEditingProviderHome(false); setProviderHomeDraft(providerSettings.home); }}
-        onChange={setProviderHomeDraft}
-        onEdit={() => { setProviderHomeDraft(providerSettings.home); setEditingProviderHome(true); }}
-        onReset={resetProviderHome}
-        onSubmit={saveProviderHome}
-        provider={providerSettings}
-        value={providerHomeDraft}
-      />
+      </div>}
 
       <div aria-live="polite">
         {notice && <Alert kind={notice.kind} onDismiss={() => setNotice(null)}>{notice.text}</Alert>}
         {error && <Alert kind="error" onDismiss={() => setError("")}>{error}</Alert>}
       </div>
+
+      {view === "sessions" && <>
 
       {configReady && <Overview
         error={overviewError}
@@ -1340,9 +1376,12 @@ function App() {
           record={inspected}
         />}
       </section>
+      </>}
+
+      {view === "schedules" && configReady && <ScheduledCleanupPage onSessionsChanged={refreshAll} providerIcons={PROVIDER_ICONS} providers={providers} token={token}/>}
     </div>
 
-    {keepToast && <KeepToast
+    {view === "sessions" && keepToast && <KeepToast
       isBusy={isSavingKeep}
       onDismiss={() => setKeepToast(null)}
       onUndo={async () => {
@@ -1355,7 +1394,7 @@ function App() {
       title={keepToast.title}
     />}
 
-    {selected.size > 0 && <SelectionTray
+    {view === "sessions" && selected.size > 0 && <SelectionTray
       expanded={selectionTrayExpanded}
       isLoading={isLoading}
       isPlanning={isPlanning}
@@ -2227,7 +2266,7 @@ function DeletionDialog({ isDeleting, isPlanRefreshing, onCancelCleanup, onClose
   const errorTone = needsAttention ? "message-warning" : "message-danger";
 
   return <div className="dialog-backdrop"><section role="dialog" aria-modal="true" aria-labelledby="delete-title" className="dialog-panel"><div className="flex items-start justify-between gap-4"><div><div className="cleanup-eyebrow"><ShieldCheck size={13}/> Session cleanup</div><h2 id="delete-title" className="dialog-title">{operation ? operation.message : "Review selected sessions"}</h2><p className="dialog-copy">Session Steward creates a local backup before cleanup begins.</p></div><button disabled={active} onClick={onClose} aria-label="Close cleanup" className="icon-button"><X size={17}/></button></div>
-    {!operation && <div className="mt-5 grid gap-3 sm:grid-cols-2"><Scope checked={scope === "core"} disabled={isDeleting || isPlanRefreshing} title="Standard cleanup" text={providerId === "claude-code" ? "Removes the selected local sessions, transcripts, history, and linked session artifacts." : "Removes the sessions, transcripts, history, logs, and linked subagents."} onClick={() => onScopeChange("core")}/><Scope checked={scope === "deep"} disabled={isDeleting || isPlanRefreshing} title="Thorough cleanup" text={providerId === "claude-code" ? "Also removes recognized file checkpoints owned by these sessions. Worktrees are always kept." : "Also removes supported Desktop references, saved memory, and goals."} onClick={() => onScopeChange("deep")}/></div>}
+    {!operation && <div className="mt-5 grid gap-3 sm:grid-cols-2"><CleanupScope checked={scope === "core"} disabled={isDeleting || isPlanRefreshing} title="Standard cleanup" text={providerId === "claude-code" ? "Removes the selected local sessions, transcripts, history, and linked session artifacts." : "Removes the sessions, transcripts, history, logs, and linked subagents."} onClick={() => onScopeChange("core")}/><CleanupScope checked={scope === "deep"} disabled={isDeleting || isPlanRefreshing} title="Thorough cleanup" text={providerId === "claude-code" ? "Also removes recognized file checkpoints owned by these sessions. Worktrees are always kept." : "Also removes supported Desktop references, saved memory, and goals."} onClick={() => onScopeChange("deep")}/></div>}
     {planError && <div role="alert" className="dialog-message message-danger">{planError}</div>}
     {planNotice && <div role="status" className="dialog-message message-warning">{planNotice}</div>}
     <div className="dialog-plan-region" aria-busy={isPlanRefreshing}>
@@ -2250,10 +2289,6 @@ function DeletionDialog({ isDeleting, isPlanRefreshing, onCancelCleanup, onClose
 
 function Metric({ label, value }) {
   return <div className="metric"><p>{label}</p><strong>{value}</strong></div>;
-}
-
-function Scope({ checked, disabled, onClick, text, title }) {
-  return <button disabled={disabled} aria-pressed={checked} onClick={onClick} className={`scope-card ${checked ? "scope-card-active" : ""}`}><div className="scope-heading"><span>{title}</span><span className="scope-check">{checked && <Check size={12} strokeWidth={3}/>}</span></div><p>{text}</p></button>;
 }
 
 function AnthropicIcon({ size }) {

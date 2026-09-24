@@ -116,7 +116,7 @@ You can then ask your client to find inactive sessions, compare recognized sessi
 
 Session Steward marks cleanup, restore, and schedule management as destructive MCP actions so the client can apply its configured approval policy.
 
-Scheduled cleanup continues in the background after you close the client. You can ask to pause, resume, run, change, or remove a schedule. Before uninstalling Session Steward, stop scheduled cleanup:
+Automatic cleanup continues in the background after you close the client. Create and manage schedules through MCP or the browser. Before uninstalling Session Steward, stop the scheduler:
 
 ```bash
 session-steward-scheduler --stop
