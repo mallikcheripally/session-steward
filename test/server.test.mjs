@@ -13,6 +13,7 @@ import {
   SESSION_MUTATION_BUSY,
 } from "../lib/session-cleanup.mjs";
 import { getProvider } from "../lib/providers/index.mjs";
+import { createCleanupScheduleStore } from "../lib/cleanup-schedules.mjs";
 import {
   createCodexHomeFixture,
   createLargeCodexHomeFixture,
@@ -68,6 +69,97 @@ async function createDeletionPlan(baseUrl, ids, scope = "core", providerId = "co
   assert.equal(response.status, 200, body.error);
   return body.plan;
 }
+
+test("browser schedule controls share MCP schedules and the background service", async (context) => {
+  const fixture = await createCodexHomeFixture();
+  const configDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "session-steward-browser-schedules-"));
+  const scheduleStore = createCleanupScheduleStore({ configDirectory });
+  const mcpSchedule = await scheduleStore.save({
+    inactiveDays: 3_650,
+    name: "Created through MCP",
+    provider: "codex",
+    providerHomeOverride: fixture.codexHome,
+    runEveryDays: 7,
+  });
+  let running = true;
+  const schedulerService = {
+    start: async () => ({ platform: "test", running: running = true, supported: true }),
+    status: async () => ({ platform: "test", running, supported: true }),
+    stop: async () => ({ platform: "test", running: running = false, supported: true }),
+  };
+  const server = await startLocalServer({
+    codexHome: fixture.codexHome,
+    configDirectory,
+    port: 0,
+    scheduleStore,
+    schedulerService,
+  });
+  context.after(async () => {
+    await server.close();
+    await removeCodexHomeFixture(fixture.codexHome);
+    await fs.rm(configDirectory, { force: true, recursive: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const change = async (route, method, body, authorized = true) => {
+    const response = await fetch(`${baseUrl}${route}`, {
+      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: {
+        "Content-Type": "application/json",
+        Origin: baseUrl,
+        ...(authorized ? { "X-Session-Steward-Token": server.token } : {}),
+      },
+      method,
+    });
+    return { body: await response.json(), status: response.status };
+  };
+  const route = `/api/automatic-cleanup/schedules/${encodeURIComponent(mcpSchedule.id)}`;
+  const initial = await fetch(`${baseUrl}/api/automatic-cleanup`).then((response) => response.json());
+  assert.equal(initial.scheduler.running, true);
+  assert.equal(initial.schedules[0].name, "Created through MCP");
+  assert.equal("providerHomeOverride" in initial.schedules[0], false);
+
+  assert.equal((await change(route, "PUT", { ...mcpSchedule, enabled: false }, false)).status, 400);
+  const definition = {
+    archiveStatus: "all",
+    cleanupMode: "thorough",
+    enabled: false,
+    inactiveDays: 3_650,
+    includeInternals: false,
+    includeSupporting: false,
+    maxSessions: 25,
+    name: "Created through MCP",
+    provider: "codex",
+    runEveryDays: 7,
+    selectionOrder: "oldest",
+  };
+  const paused = await change(route, "PUT", definition);
+  assert.equal(paused.status, 200);
+  assert.equal(paused.body.schedule.enabled, false);
+  const raw = JSON.parse(await fs.readFile(path.join(configDirectory, "cleanup-schedules.json"), "utf8"));
+  assert.equal(raw.schedules[0].providerHomeOverride, fixture.codexHome);
+
+  const run = await change(`${route}/run`, "POST", {});
+  assert.equal(run.status, 200);
+  assert.equal(run.body.run.status, "no-matches");
+  assert.equal((await scheduleStore.list())[0].lastRun.status, "no-matches");
+
+  assert.equal((await change(route, "PUT", { ...definition, enabled: true })).body.schedule.enabled, true);
+  assert.equal((await change("/api/automatic-cleanup/scheduler", "POST", { action: "stop" })).body.scheduler.running, false);
+  const editedWhileStopped = await change(route, "PUT", { ...definition, enabled: true, name: "Edited through browser" });
+  assert.equal(editedWhileStopped.body.scheduler.running, false);
+  assert.equal(editedWhileStopped.body.schedule.name, "Edited through browser");
+  assert.equal((await change("/api/automatic-cleanup/scheduler", "POST", { action: "start" })).body.scheduler.running, true);
+  const created = await change("/api/automatic-cleanup/schedules", "POST", {
+    inactiveDays: 90,
+    name: "Browser rule",
+    provider: "codex",
+    runEveryDays: 7,
+  });
+  assert.equal(created.status, 200);
+  assert.equal(created.body.schedule.name, "Browser rule");
+  assert.equal((await change(`/api/automatic-cleanup/schedules/${created.body.schedule.id}`, "DELETE")).status, 200);
+  assert.deepEqual((await scheduleStore.list()).map(({ id }) => id), [mcpSchedule.id]);
+});
 
 test("the session events route is read-only, bounded, and accepts only session IDs", async (context) => {
   const fixture = await createCodexHomeFixture();
@@ -289,15 +381,22 @@ test("the local server exposes the UI and synthetic Codex sessions", async (cont
   });
 
   const baseUrl = `http://127.0.0.1:${server.port}`;
-  const [healthResponse, pageResponse, sessionsResponse, overviewResponse] = await Promise.all([
+  const [healthResponse, pageResponse, automaticPageResponse, scheduledPageResponse, sessionsResponse, overviewResponse] = await Promise.all([
     fetch(`${baseUrl}/health`),
     fetch(baseUrl),
+    fetch(`${baseUrl}/automatic-cleanup`),
+    fetch(`${baseUrl}/scheduled-cleanup`),
     fetch(`${baseUrl}/api/sessions`),
     fetch(`${baseUrl}/api/session-overview`),
   ]);
 
   assert.deepEqual(await healthResponse.json(), { status: "ok" });
-  assert.match(await pageResponse.text(), /Session Steward/u);
+  const page = await pageResponse.text();
+  assert.match(page, /Session Steward/u);
+  assert.equal(automaticPageResponse.status, 200);
+  assert.equal(await automaticPageResponse.text(), page);
+  assert.equal(scheduledPageResponse.status, 200);
+  assert.equal(await scheduledPageResponse.text(), page);
   const sessions = await sessionsResponse.json();
   assert.equal(sessions.records.length, 2);
   assert.equal(sessions.total, 2);

@@ -65,6 +65,9 @@ test("cleanup schedules persist strict bounded criteria and claim only once", as
   assert.equal(saved.nextRunAtMs, currentTime + 12 * 86_400_000);
   assert.equal((await createStore().list())[0].minimumTranscriptBytes, 500_000_000);
   assert.equal("providerHomeOverride" in (await createStore().list())[0], false);
+  await store.save({ ...saved, name: "Updated in browser" }, { id: saved.id });
+  const storedState = JSON.parse(await fs.readFile(path.join(configDirectory, "cleanup-schedules.json"), "utf8"));
+  assert.equal(storedState.schedules[0].providerHomeOverride, "/one-time/codex-home");
 
   currentTime = saved.nextRunAtMs;
   const claimed = await store.claim(saved.id);
