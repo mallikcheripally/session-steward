@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.1] - 2026-11-14
+
+### Changed
+
+- Updated runtime and browser dependencies, plus the MCP Registry publisher.
+- Refreshed compatibility coverage for Codex CLI 0.169.0, ChatGPT 26.1111.21308, Claude Code 2.1.325, and Claude Desktop 5.11492.5.
+
+### Fixed
+
+- Codex cleanup now removes and verifies session read receipts and guardian review records, with recovery coverage for the current database schema.
+- Renamed Codex sessions now use their saved names in search, sorting, and inspection.
+- Claude Code print-mode sessions are now recognized alongside interactive CLI sessions. Current API-request and cost metadata no longer count as unknown timeline records.
+
 ## [0.12.0] - 2026-09-24
 
 ### Added
@@ -190,6 +203,7 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.12.1]: https://github.com/mallikcheripally/session-steward/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/mallikcheripally/session-steward/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/mallikcheripally/session-steward/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/mallikcheripally/session-steward/compare/v0.11.0...v0.11.1

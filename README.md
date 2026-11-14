@@ -187,6 +187,10 @@ Codex and Claude Code CLI sessions are supported on macOS, Linux, and Windows. L
 
 Inside WSL, Session Steward uses the Linux home folder. Run it from Windows to manage sessions in your Windows profile.
 
+Compatibility coverage was refreshed on November 14, 2026 for [Codex CLI 0.169.0](https://github.com/openai/codex/releases/tag/rust-v0.169.0), ChatGPT 26.1111.21308, [Claude Code 2.1.325](https://github.com/anthropics/claude-code/releases/tag/v2.1.325), and Claude Desktop 5.11492.5. The regression suite exercises Codex's current upstream database schema and a transcript written by the current Claude CLI against a local mock response, including cleanup and recovery. Desktop checks inspect local storage metadata; they do not exercise every app workflow.
+
+Storage checks still run against the actual files before cleanup. Unrecognized files are reported and retained, including Codex attachment files whose ownership cannot be established safely. Claude print-mode (`sdk-cli`) sessions are recognized as local CLI sessions.
+
 Archiving a Claude Desktop session does not delete it. It remains available until it is explicitly included in cleanup. Session Steward does not remove Claude worktrees.
 
 ## Update or uninstall
@@ -213,9 +217,9 @@ Current benchmarks on an arm64 Mac with Node.js 24.15.0:
 
 | Scenario | Scale | Time | Measured memory growth |
 | --- | ---: | ---: | ---: |
-| Paginated session listing | 50,003 sessions | 26 ms | 0.16 MB heap |
-| Session size index | 20,003 sessions | 85 ms cold, 9.7 ms warm | 30 MB peak RSS |
-| Transcript-only discovery | 5,003 sessions | 662 ms | 4.02 MB heap |
+| Paginated session listing | 50,003 sessions | 43 ms | 0.54 MB heap |
+| Session size index | 20,003 sessions | 111 ms cold, 14.8 ms warm | 31 MB peak RSS |
+| Transcript-only discovery | 5,003 sessions | 911 ms | 5.04 MB heap |
 
 Run the scale benchmarks with:
 

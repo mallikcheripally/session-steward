@@ -28,7 +28,7 @@ for (const layout of ["current", "alternate"]) {
     assert.equal((await claude.verifySessionDeletion({ plan, scope: "core", store })).complete, true);
     const manifest = JSON.parse(await fs.readFile(path.join(result.backupDirectory, "manifest.json"), "utf8"));
     assert.equal(manifest.version, 2);
-    assert.equal(manifest.profileId, "claude-local-store-2026-08");
+    assert.equal(manifest.profileId, "claude-local-store-2026-11");
     await claude.restoreSessionDeletionBackup({
       backupDirectory: result.backupDirectory,
       claudeHome: fixture.claudeHome,
