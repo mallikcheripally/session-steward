@@ -105,3 +105,6 @@ jobs:
 
       - name: Benchmark session events
         run: npm run benchmark:events
+
+      - name: Benchmark session tokens
+        run: npm run benchmark:tokens

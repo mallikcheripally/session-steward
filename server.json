@@ -8,12 +8,12 @@
     "source": "github",
     "id": "1318506845"
   },
-  "version": "0.12.0",
+  "version": "0.12.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "session-steward",
-      "version": "0.12.0",
+      "version": "0.12.1",
       "transport": {
         "type": "stdio"
       },

@@ -820,7 +820,7 @@ test("deep cleanup backs up, removes, and verifies only the selected family", as
   ));
   assert.deepEqual(new Set(operation.ids), new Set(plan.ids));
   assert.equal(operation.version, 3);
-  assert.equal(operation.profileId, "codex-local-store-2026-09");
+  assert.equal(operation.profileId, "codex-local-store-2026-11");
   assert.equal(operation.compatibilityStatus, "ready");
   assert.equal(operation.resolvedDatabases.state.primary.filename, "state_5.sqlite");
   assert.equal(operation.resolvedDatabases.queue.primary.filename, "queue_1.sqlite");
