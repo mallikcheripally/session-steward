@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased (0.12.2)
+
+### Changed
+
+- Refreshed compatibility coverage for Codex CLI 0.171.0, ChatGPT 26.1117.41037, Claude Code 2.1.330, and Claude Desktop 6.28899.2.
+- Cleanup fingerprints stream selected database rows in deterministic order, keeping large metadata collections out of JavaScript memory.
+
+### Fixed
+
+- Codex cleanup now includes the current session model ID store in previews, change detection, deletion, verification, and recovery across recognized state databases.
+- Claude Desktop agent names, file history deltas, relocation markers, API request blobs, and tool inventories no longer count as unknown timeline records. Unknown future record types remain visible in coverage reports.
+
 ## [0.12.1] - 2026-11-14
 
 ### Changed
