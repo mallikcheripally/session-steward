@@ -1,6 +1,6 @@
 {
   "name": "session-steward",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "mcpName": "io.github.mallikcheripally/session-steward",
   "description": "Codex and Claude Code session manager - browse and delete old sessions. Browser UI + CLI + MCP",
   "license": "MIT",
@@ -59,6 +59,7 @@
   "scripts": {
     "build": "vite build",
     "benchmark:claude-discovery": "node --expose-gc test/benchmarks/claude-discovery.mjs",
+    "benchmark:cleanup": "node --expose-gc test/benchmarks/codex-cleanup.mjs",
     "benchmark:discovery": "node --expose-gc test/benchmarks/codex-discovery.mjs",
     "benchmark:events": "node --expose-gc test/benchmarks/session-events.mjs",
     "benchmark:overview": "node --expose-gc test/benchmarks/codex-overview.mjs",

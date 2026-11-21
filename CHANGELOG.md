@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.2] - 2026-11-21
+
+### Changed
+
+- Refreshed compatibility coverage for Codex CLI 0.171.0, ChatGPT 26.1117.41037, Claude Code 2.1.330, and Claude Desktop 6.28899.2.
+- Cleanup fingerprints stream selected database rows in deterministic order, keeping large metadata collections out of JavaScript memory.
+
+### Fixed
+
+- Codex cleanup now includes the current session model ID store in previews, change detection, deletion, verification, and recovery across recognized state databases.
+- Claude Desktop agent names, file history deltas, relocation markers, API request blobs, and tool inventories no longer count as unknown timeline records. Unknown future record types remain visible in coverage reports.
+
 ## [0.12.1] - 2026-11-14
 
 ### Changed
@@ -203,6 +215,7 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.12.2]: https://github.com/mallikcheripally/session-steward/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/mallikcheripally/session-steward/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/mallikcheripally/session-steward/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/mallikcheripally/session-steward/compare/v0.11.1...v0.11.2

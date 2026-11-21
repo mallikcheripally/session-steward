@@ -187,7 +187,7 @@ Codex and Claude Code CLI sessions are supported on macOS, Linux, and Windows. L
 
 Inside WSL, Session Steward uses the Linux home folder. Run it from Windows to manage sessions in your Windows profile.
 
-Compatibility coverage was refreshed on November 14, 2026 for [Codex CLI 0.169.0](https://github.com/openai/codex/releases/tag/rust-v0.169.0), ChatGPT 26.1111.21308, [Claude Code 2.1.325](https://github.com/anthropics/claude-code/releases/tag/v2.1.325), and Claude Desktop 5.11492.5. The regression suite exercises Codex's current upstream database schema and a transcript written by the current Claude CLI against a local mock response, including cleanup and recovery. Desktop checks inspect local storage metadata; they do not exercise every app workflow.
+Compatibility coverage was refreshed on November 21, 2026 for [Codex CLI 0.171.0](https://github.com/openai/codex/releases/tag/rust-v0.171.0), ChatGPT 26.1117.41037, [Claude Code 2.1.330](https://github.com/anthropics/claude-code/releases/tag/v2.1.330), and Claude Desktop 6.28899.2. The regression suite exercises Codex's current and previous upstream database schemas, including session model ID cleanup and recovery, and transcripts written by the current and previous Claude CLIs against local mock responses. Desktop checks inspect local storage metadata and exercise synthetic transcript records; they do not exercise every app workflow.
 
 Storage checks still run against the actual files before cleanup. Unrecognized files are reported and retained, including Codex attachment files whose ownership cannot be established safely. Claude print-mode (`sdk-cli`) sessions are recognized as local CLI sessions.
 
@@ -225,6 +225,7 @@ Run the scale benchmarks with:
 
 ```bash
 npm run benchmark:scale
+npm run benchmark:cleanup
 npm run benchmark:overview
 npm run benchmark:size
 npm run benchmark:discovery
