@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.12.2)
+## [0.12.2] - 2026-11-21
 
 ### Changed
 
@@ -215,6 +215,7 @@
 - Support for custom Codex home folders and a saved folder preference.
 - Streaming and bounded-memory discovery for large session collections and transcripts.
 
+[0.12.2]: https://github.com/mallikcheripally/session-steward/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/mallikcheripally/session-steward/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/mallikcheripally/session-steward/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/mallikcheripally/session-steward/compare/v0.11.1...v0.11.2
