@@ -1,0 +1,45 @@
+{
+  "date": "2026-11-22",
+  "data": "Synthetic only. No personal session content was submitted in these tests.",
+  "claudeDesktop": {
+    "appVersion": "6.28899.6",
+    "surface": "Code tab, local session-steward workspace",
+    "modelLabel": "Opus 5 High",
+    "case": "short-codex",
+    "sourceMessages": 80,
+    "launch": "Manually created a fresh desktop session and sent one prompt referencing START.md; no production button exists",
+    "result": "All eight requested facts were recovered with source record references",
+    "followUpUserMessages": 0,
+    "observedReadPermissionPrompts": 0,
+    "limitations": [
+      "Usage limit reached during the task; desktop completed a wrapping-up response",
+      "Response called eight fields nine facts",
+      "Response incorrectly described record 81 as outside the recent-eight-record window",
+      "Not a coding continuation or long-session pass",
+      "User instructed us not to run more Claude tests after the five-hour limit was exhausted"
+    ],
+    "values": {
+      "targetProject": "Project Aurora",
+      "effectiveRequestHeader": "X-Aurora-Request",
+      "retentionDays": 14,
+      "protectedPath": "legacy/importer.mjs",
+      "allowedToPublish": false,
+      "failedTest": "test/aurora/retry-boundary.test.mjs",
+      "latestTestStatus": "FAILED",
+      "historicalBranch": "feature/aurora-retries"
+    }
+  },
+  "chatgptDesktop": {
+    "automation": "The computer-use tool refuses control of com.openai.codex for safety reasons; no bypass attempted",
+    "case": "long-claude-6-months",
+    "sourceMessages": 25000,
+    "test": "User started a fresh local Codex chat using the supplied read-only prompt",
+    "result": "Completed: all eight expected fields recovered with correct source records in 27685 ms; no follow-up user message or read permission prompt. Retrieved through the desktop read_thread connector; see chatgpt-desktop-result.json."
+  },
+  "supplementaryCodexCli": {
+    "version": "0.171.0",
+    "test": "Ephemeral, read-only authentication/connectivity probe; no handoff retrieval tested here",
+    "result": "HANDOFF_PROBE_READY",
+    "desktopEvidence": false
+  }
+}

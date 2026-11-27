@@ -27,6 +27,9 @@ import {
 } from "lucide-react";
 import { sessionDateGroupForSort, sessionDayLabel } from "./date-groups.mjs";
 import CleanupScope from "./cleanup-scope.jsx";
+import SessionActions from "./session-actions.jsx";
+import HandoffFiles from "./handoff-files.jsx";
+import Pagination from "./pagination.jsx";
 import ScheduledCleanupPage from "./scheduled-cleanup.jsx";
 import {
   newestSessionEvents,
@@ -43,6 +46,10 @@ const SESSION_EVENT_COVERAGE_THRESHOLD = 90;
 const ALL_WORKSPACES = "__all_workspaces__";
 const AUTOMATIC_CLEANUP_PATH = "/automatic-cleanup";
 const CLEANUP_VIEW_PATHS = new Set([AUTOMATIC_CLEANUP_PATH, "/scheduled-cleanup"]);
+function viewFromPath(pathname) {
+  const route = pathname.replace(/\/$/u, "");
+  return route === "/handoffs" ? "handoffs" : CLEANUP_VIEW_PATHS.has(route) ? "schedules" : "sessions";
+}
 
 const FILTER_REGISTRY = [
   {
@@ -238,7 +245,8 @@ function getSessionKind(record) {
 }
 
 function App() {
-  const [view, setView] = useState(() => CLEANUP_VIEW_PATHS.has(window.location.pathname.replace(/\/$/u, "")) ? "schedules" : "sessions");
+  const [view, setView] = useState(() => viewFromPath(window.location.pathname));
+  const [routeSearch, setRouteSearch] = useState(() => window.location.search);
   const [activeProviderId, setActiveProviderId] = useState(null);
   const [configReady, setConfigReady] = useState(false);
   const [providers, setProviders] = useState({});
@@ -304,20 +312,21 @@ function App() {
   const keyboardStateRef = useRef(null);
 
   useEffect(() => {
-    const onPopState = () => setView(CLEANUP_VIEW_PATHS.has(window.location.pathname.replace(/\/$/u, "")) ? "schedules" : "sessions");
+    const onPopState = () => { setView(viewFromPath(window.location.pathname)); setRouteSearch(window.location.search); };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
-  const navigateTo = (nextView, event) => {
+  const navigateTo = (nextView, event, query = "") => {
     if (dialog || isDeleting) {
       event.preventDefault();
       return;
     }
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    const nextPath = nextView === "schedules" ? AUTOMATIC_CLEANUP_PATH : "/";
-    if (window.location.pathname !== nextPath) window.history.pushState(null, "", nextPath);
+    const nextPath = (nextView === "schedules" ? AUTOMATIC_CLEANUP_PATH : nextView === "handoffs" ? "/handoffs" : "/") + query;
+    if (window.location.pathname + window.location.search !== nextPath) window.history.pushState(null, "", nextPath);
+    setRouteSearch(query);
     setView(nextView);
   };
 
@@ -1246,6 +1255,7 @@ function App() {
         <nav aria-label="Views" className="page-switch">
           <a aria-current={view === "sessions" ? "page" : undefined} aria-disabled={dialog || isDeleting ? "true" : undefined} href="/" onClick={(event) => navigateTo("sessions", event)}><Database size={14}/> Sessions</a>
           <a aria-current={view === "schedules" ? "page" : undefined} aria-disabled={dialog || isDeleting ? "true" : undefined} href={AUTOMATIC_CLEANUP_PATH} onClick={(event) => navigateTo("schedules", event)}><CalendarDays size={14}/> Automatic cleanup</a>
+          <a aria-current={view === "handoffs" ? "page" : undefined} aria-disabled={dialog || isDeleting ? "true" : undefined} href="/handoffs" onClick={(event) => navigateTo("handoffs", event)}><Archive size={14}/> Handoffs</a>
         </nav>
       </header>
 
@@ -1362,6 +1372,7 @@ function App() {
           key={`${activeProviderId}:${inspected?.id ?? "empty"}`}
           onClose={closeInspector}
           onOpenSession={inspect}
+          onViewHandoffs={(event, query) => navigateTo("handoffs", event, query)}
           onToggleSessionKeep={(record) => updateKeep({
             keep: !record.keep?.session,
             kind: "session",
@@ -1374,9 +1385,12 @@ function App() {
           })}
           providerId={activeProviderId}
           record={inspected}
+          token={token}
         />}
       </section>
       </>}
+
+      {view === "handoffs" && configReady && <HandoffFiles key={routeSearch} api={api} token={token} formatAge={age} formatSize={fileSize} scopeQuery={routeSearch} onClearScope={event => navigateTo("handoffs", event)}/>}
 
       {view === "schedules" && configReady && <ScheduledCleanupPage onSessionsChanged={refreshAll} providerIcons={PROVIDER_ICONS} providers={providers} token={token}/>}
     </div>
@@ -1784,7 +1798,7 @@ function EmptyState({ hasActiveFilters, kept = false, onClear }) {
   return <div className="empty-state"><div><div className="empty-state-icon">{kept ? <ShieldCheck size={19}/> : <Search size={19}/>}</div><h3>{title}</h3><p>{copy}</p>{hasActiveFilters && <button type="button" onClick={onClear} className="button secondary mt-4">Clear filters</button>}</div></div>;
 }
 
-function Inspector({ isSavingKeep, onClose, onOpenSession, onToggleSessionKeep, onToggleWorkspaceKeep, providerId, record }) {
+function Inspector({ isSavingKeep, onClose, onOpenSession, onToggleSessionKeep, onToggleWorkspaceKeep, onViewHandoffs, providerId, record, token }) {
   // Both are tracked against the session they belong to, so selecting another
   // one cannot inherit the previous session's state before an effect clears it.
   const [tabChoice, setTabChoice] = useState({ id: null, tab: "timeline" });
@@ -1808,11 +1822,10 @@ function Inspector({ isSavingKeep, onClose, onOpenSession, onToggleSessionKeep, 
     {record
       ? <div><div className="inspector-content"><div className="min-w-0"><h2 className="inspector-title">{record.displayName}</h2><p className="inspector-id">{record.id}</p></div><ul aria-label="Session labels" className="inspector-chips">{[
         record.archived ? "Archived" : "Active",
-        ...(record.keep?.kept ? ["Kept"] : []),
         // The provider toggle already names the provider, so the chip stays short
         record.isSubagent ? "Subagent" : record.isFork ? "Fork" : "Primary session",
         ...(record.surface ? [record.surface === "desktop" ? "Claude Desktop" : "Claude Code CLI"] : []),
-      ].map((chip) => <li className="inspector-chip" key={chip}>{chip}</li>)}</ul><dl className="inspector-details"><Detail label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail label="Tokens" value={tokenSummaryLabel(tokenState)}/><Detail label="Model" value={modelSummaryLabel(tokenState)}/><Detail label="Workspace" value={record.cwd || "Not recorded"} wide/></dl><section className="keep-controls" aria-label="Keep protection"><div className="keep-control-actions"><button disabled={isSavingKeep} onClick={() => onToggleSessionKeep(record)} className="button secondary" type="button"><ShieldCheck size={14}/>{record.keep?.session ? "Stop keeping session" : "Keep session"}</button>{record.cwd && <button disabled={isSavingKeep} onClick={() => onToggleWorkspaceKeep(record)} className="button ghost" type="button"><FolderKanban size={14}/>{record.keep?.workspace ? "Stop keeping workspace" : "Keep workspace"}</button>}</div><p>Kept sessions are skipped by Session Steward cleanup. {providerId === "codex" ? "Codex" : "Claude Code"} can still remove them.</p></section></div><InspectorTabs key={record.id} onOpenSession={onOpenSession} onSelectTab={selectTab} onTokens={setTokenReport} providerId={providerId} record={record} relatedIds={relatedIds} selectedTab={selectedTab} tokenState={tokenState}/></div>
+      ].map((chip) => <li className="inspector-chip" key={chip}>{chip}</li>)}</ul><SessionActions api={api} providerId={providerId} record={record} token={token} isSavingKeep={isSavingKeep} onToggleSessionKeep={onToggleSessionKeep} onToggleWorkspaceKeep={onToggleWorkspaceKeep} onViewHandoffs={onViewHandoffs}/><dl className="inspector-details"><Detail label="Last activity" value={fullDate(record.updatedAtMs)}/><Detail label="Transcript" value={record.rolloutMissing ? "Missing" : Number.isFinite(record.transcriptBytes) ? `Available · ${fileSize(record.transcriptBytes)}` : "Available"}/><Detail label="Tokens" value={tokenSummaryLabel(tokenState)}/><Detail label="Model" value={modelSummaryLabel(tokenState)}/><Detail label="Workspace" value={record.cwd || "Not recorded"} wide/></dl></div><InspectorTabs key={record.id} onOpenSession={onOpenSession} onSelectTab={selectTab} onTokens={setTokenReport} providerId={providerId} record={record} relatedIds={relatedIds} selectedTab={selectedTab} tokenState={tokenState}/></div>
       : <div className="inspector-empty"><div><div className="inspector-empty-icon"><Info size={18}/></div><h2>Select a session</h2><p>Its location, activity, and linked sessions will appear here.</p></div></div>}
   </aside></>;
 }
@@ -2222,10 +2235,6 @@ const modelSummaryLabel = ({ error, tokens }) => {
 
 function Detail({ label, value, wide = false }) {
   return <div className={`detail-row${wide ? " detail-row-wide" : ""}`}><dt>{label}</dt><dd>{value}</dd></div>;
-}
-
-function Pagination({ page, pages, numbers, setPage }) {
-  return <div className="pagination"><span>Page <strong>{page}</strong> of {pages}</span><div className="flex items-center gap-1"><button aria-label="Previous page" disabled={page === 1} onClick={() => setPage(page - 1)} className="page-button"><ChevronLeft size={15}/></button><div className="hidden items-center gap-1 sm:flex">{numbers.map((number) => <button key={number} onClick={() => setPage(number)} aria-current={page === number ? "page" : undefined} className="page-button">{number}</button>)}</div><button aria-label="Next page" disabled={page === pages} onClick={() => setPage(page + 1)} className="page-button"><ChevronRight size={15}/></button></div></div>;
 }
 
 function CompatibilityControl({ compatibility, compatibilityRef, expanded, onToggle, onClose }) {

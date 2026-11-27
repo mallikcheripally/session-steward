@@ -10,6 +10,7 @@ Codex can delete a session, and Claude Code can purge a project. Built-in deleti
 
 - Find inactive or large sessions across workspaces. Switch between Codex and Claude Code, then filter by archive status, name, or session ID.
 - Open a session before deciding. See a distilled timeline of recent messages, file changes, commands, and command results, plus recognized storage and token use.
+- Continue a Codex conversation in Claude Code, or the other way around with Handoffs.
 - Clean selected sessions using a plan you review first, with a local backup, verification afterward, and recovery when cleanup needs attention.
 
 ## Try Session Steward locally
@@ -187,7 +188,7 @@ Codex and Claude Code CLI sessions are supported on macOS, Linux, and Windows. L
 
 Inside WSL, Session Steward uses the Linux home folder. Run it from Windows to manage sessions in your Windows profile.
 
-Compatibility coverage was refreshed on November 21, 2026 for [Codex CLI 0.171.0](https://github.com/openai/codex/releases/tag/rust-v0.171.0), ChatGPT 26.1117.41037, [Claude Code 2.1.330](https://github.com/anthropics/claude-code/releases/tag/v2.1.330), and Claude Desktop 6.28899.2. The regression suite exercises Codex's current and previous upstream database schemas, including session model ID cleanup and recovery, and transcripts written by the current and previous Claude CLIs against local mock responses. Desktop checks inspect local storage metadata and exercise synthetic transcript records; they do not exercise every app workflow.
+Compatibility coverage was refreshed on November 28, 2026 for [Codex CLI 0.172.0](https://github.com/openai/codex/releases/tag/rust-v0.172.0), ChatGPT 26.1120.50957, [Claude Code 2.1.332](https://github.com/anthropics/claude-code/releases/tag/v2.1.332), and Claude Desktop 6.28899.6. The regression suite exercises current and previous Codex database schemas, cleanup and recovery, plus transcripts recorded with the official Claude CLIs against local mock responses. Desktop checks cover local storage metadata and synthetic records, rather than every app workflow.
 
 Storage checks still run against the actual files before cleanup. Unrecognized files are reported and retained, including Codex attachment files whose ownership cannot be established safely. Claude print-mode (`sdk-cli`) sessions are recognized as local CLI sessions.
 

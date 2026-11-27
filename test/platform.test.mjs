@@ -11,8 +11,18 @@ import {
   getClaudeDesktopDataHome,
   getCommandInvocation,
   getDefaultConfigDirectory,
+  getDefaultDataDirectory,
   invalidateClaudeDesktopDataHome,
 } from "../lib/platform.mjs";
+
+test("handoff application data uses stable per-user platform directories", () => {
+  assert.equal(getDefaultDataDirectory({ env: {}, home: "/Users/test", platform: "darwin" }), "/Users/test/Library/Application Support/session-steward");
+  assert.equal(getDefaultDataDirectory({ env: { XDG_DATA_HOME: "/data" }, home: "/home/test", platform: "linux" }), "/data/session-steward");
+  assert.equal(getDefaultDataDirectory({ env: { XDG_DATA_HOME: "relative" }, home: "/home/test", platform: "linux" }), "/home/test/.local/share/session-steward");
+  const home = "C:\\Users\\Test";
+  assert.equal(getDefaultDataDirectory({ env: { LOCALAPPDATA: "D:\\Local", APPDATA: "D:\\Roaming" }, home, platform: "win32" }), "D:\\Local\\session-steward");
+  assert.equal(getDefaultDataDirectory({ env: { LOCALAPPDATA: "/msys/data" }, home, platform: "win32" }), `${home}\\AppData\\Local\\session-steward`);
+});
 
 test("Windows paths use the user profile and roaming application data", () => {
   const home = "C:\\Users\\Mallik";

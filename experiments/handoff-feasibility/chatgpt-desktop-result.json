@@ -1,0 +1,16 @@
+{
+  "threadId": "01a20218-a701-7a92-8435-6a58419d7d43",
+  "title": "Recover handoff requirements",
+  "hostId": "local",
+  "appVersion": "26.1117.41037",
+  "sourceCase": "long-claude-6-months",
+  "sourceMessages": 25000,
+  "sourceBytes": 21589481,
+  "chunks": 436,
+  "durationMs": 27685,
+  "finalAnswer": "| Field | Recorded value | Source record(s) |\n|---|---|---:|\n| `targetProject` | Project Aurora | 1, 25000 |\n| `effectiveRequestHeader` | `X-Aurora-Request` | 6751 |\n| `retentionDays` | 14 | 13251 |\n| `protectedPath` | `legacy/importer.mjs` | 1, 13251 |\n| `allowedToPublish` | `false` | 1, 13251 |\n| `failedTest` | `test/aurora/retry-boundary.test.mjs` | 24976 |\n| `latestTestStatus` | Failed (exit code 1) | 24976 |\n| `historicalBranch` | `feature/aurora-retries` | 1 |\n\nThe header correction superseded `X-Legacy-Nonce`, and the retention correction superseded 7 days. The test status comes from the archive.\n\nAll 436 archive chunks were searchable. Reading the files required neither a second user message nor a permission prompt.",
+  "followUpUserMessages": 0,
+  "permissionPromptsObservedInReadback": 0,
+  "commandCount": 9,
+  "note": "User launched the desktop test manually; the app connector retrieved the completed result read-only. This is not automated production launcher evidence."
+}

@@ -14,16 +14,18 @@ function ownedTables(version) {
   return [
     ...["thread_attachments", "guardian_review_feedback", "thread_read_receipts"]
       .map((name) => ({ name, idColumn: "thread_id" })),
-    ...(version === "0.171.0" ? [{ name: "session_model_ids", idColumn: "session_id" }] : []),
+    ...(version !== "0.169.0" ? [{ name: "session_model_ids", idColumn: "session_id" }] : []),
   ];
 }
 
-async function currentFixture(context, version = "0.171.0") {
+async function currentFixture(context, version = "0.172.0") {
   const fixture = await createCodexHomeFixture();
   context.after(() => removeCodexHomeFixture(fixture.codexHome));
   const threads = queryRows(fixture.stateDatabasePath, "select * from threads");
   await rm(fixture.stateDatabasePath);
-  const schema = await readFile(new URL(`../fixtures/codex-${version}-state.sql`, import.meta.url), "utf8");
+  // Upstream 0.172.0 has the same 64 state migrations as 0.171.0.
+  const schemaVersion = version === "0.172.0" ? "0.171.0" : version;
+  const schema = await readFile(new URL(`../fixtures/codex-${schemaVersion}-state.sql`, import.meta.url), "utf8");
   const database = new DatabaseSync(fixture.stateDatabasePath);
   try {
     database.exec(schema);
@@ -35,7 +37,7 @@ async function currentFixture(context, version = "0.171.0") {
       database.prepare("insert into thread_attachments values (?, ?, 'test', ?, '{}', 1)").run(`attachment-${row.id}`, row.id, row.id);
       database.prepare("insert into guardian_review_feedback values (?, ?, ?)").run(`review-${row.id}`, row.id, Buffer.from("review"));
       database.prepare("insert into thread_read_receipts values (?, null, 'revision-1', null)").run(row.id);
-      if (version === "0.171.0") {
+      if (version !== "0.169.0") {
         const insert = database.prepare("insert into session_model_ids values (?, 'artifact', ?, ?, ?)");
         insert.run(row.id, `first-${row.id}`, 0, "seed");
         insert.run(row.id, `second-${row.id}`, 1, null);
@@ -49,24 +51,26 @@ async function currentFixture(context, version = "0.171.0") {
   return fixture;
 }
 
-for (const version of ["0.169.0", "0.171.0"]) {
+for (const version of ["0.169.0", "0.171.0", "0.172.0"]) {
   for (const scope of ["core", "deep"]) {
     test(`Codex ${version} ${scope} cleanup removes owned metadata, verifies it, and restores it`, async (context) => {
       const fixture = await currentFixture(context, version);
       const tables = ownedTables(version);
-      assert.equal((await codex.diagnoseStorageCompatibility(fixture)).status, "ready");
+      const compatibility = await codex.diagnoseStorageCompatibility(fixture);
+      assert.equal(compatibility.status, "ready");
+      assert.ok(compatibility.builtFor.codexCli.includes(version));
       // A second current store also exercises versioned-store cleanup and recovery.
       const secondPath = path.join(fixture.codexHome, "state_6.sqlite");
       await copyFile(fixture.stateDatabasePath, secondPath);
       codex.invalidateSessionCache(fixture);
       const store = await codex.loadDeletionStore({ ...fixture, recordIds: [fixtureSessionIds.parent] });
       const plan = await codex.planSessionDeletion({ store, recordIds: [fixtureSessionIds.parent] });
-      assert.equal(plan.stateRelatedRowCount, version === "0.171.0" ? 20 : 12);
+      assert.equal(plan.stateRelatedRowCount, version !== "0.169.0" ? 20 : 12);
       assert.equal(plan.records.find(({ id }) => id === fixtureSessionIds.parent).displayName, "A renamed session");
       const before = await codex.fingerprintSessionDeletion({ store, plan, scope });
       const changed = new DatabaseSync(secondPath);
       try {
-        if (version === "0.171.0") {
+        if (version !== "0.169.0") {
           changed.prepare("update session_model_ids set initial_state = 'unrelated' where session_id = ? and ordinal = 0").run(fixtureSessionIds.standalone);
           assert.equal(await codex.fingerprintSessionDeletion({ store, plan, scope }), before);
           changed.prepare("update session_model_ids set initial_state = 'changed' where session_id = ? and ordinal = 0").run(fixtureSessionIds.parent);
@@ -92,7 +96,7 @@ for (const version of ["0.169.0", "0.171.0"]) {
       // must detect recreation even after the owning thread has disappeared.
       const recreated = new DatabaseSync(secondPath);
       try {
-        if (version === "0.171.0") recreated.prepare("insert into session_model_ids values (?, 'artifact', 'recreated', 0, 'new')").run(fixtureSessionIds.parent);
+        if (version !== "0.169.0") recreated.prepare("insert into session_model_ids values (?, 'artifact', 'recreated', 0, 'new')").run(fixtureSessionIds.parent);
         else recreated.prepare("insert into thread_read_receipts values (?, null, 'new', null)").run(fixtureSessionIds.parent);
       } finally { recreated.close(); }
       const verification = await codex.verifySessionDeletion({ store, plan, scope });
