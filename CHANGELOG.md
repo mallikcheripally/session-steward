@@ -17,6 +17,7 @@
 ### Fixed
 
 - Codex tool inventories and token bookkeeping, plus Claude Desktop data-flow and session-lineage metadata, no longer count as unknown conversation records. Unsupported records still appear in coverage warnings.
+- Retry a timed-out Windows Claude process-identity lookup once, allowing a slow PowerShell startup to recover while keeping cleanup blocked if identity remains uncertain.
 
 ## [0.12.2] - 2026-11-21
 

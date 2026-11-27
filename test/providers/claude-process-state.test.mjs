@@ -79,6 +79,38 @@ test("process start commands are bounded and use Claude's locale and timezone", 
   assert.equal(await readClaudeProcessStart(123, { run: async () => { throw new Error("timeout"); } }), null);
 });
 
+test("a timed-out Windows lookup retries once and still protects the matching live process", async () => {
+  const token = "134324640000000000";
+  let attempts = 0;
+  const readStart = pid => readClaudeProcessStart(pid, { platform: "win32", run: async (command, args, options) => {
+    assert.equal(options.timeout, 10_000);
+    if (++attempts === 1) throw Object.assign(new Error("PowerShell startup timed out"), { killed: true });
+    return { stdout: token };
+  } });
+  assert.equal(await claudeProcessState({ pid: 123, procStartFt: token }, { platform: "win32", kill: () => {}, readStart }), "active");
+  assert.equal(attempts, 2);
+});
+
+test("exhausted Windows retries stay unverified and other process-query failures do not retry", async () => {
+  for (const [platform, failure, expectedAttempts] of [
+    ["win32", { killed: true }, 2],
+    ["win32", { code: "ETIMEDOUT" }, 2],
+    ["win32", { code: "ENOENT" }, 1],
+    ["win32", { code: "EACCES" }, 1],
+    ["darwin", { killed: true }, 1],
+    ["linux", { killed: true }, 1],
+  ]) {
+    let attempts = 0;
+    const readStart = pid => readClaudeProcessStart(pid, { platform, run: async () => {
+      attempts += 1;
+      throw Object.assign(new Error("Process query unavailable"), failure);
+    } });
+    const marker = { pid: 123, ...(platform === "win32" ? { procStartFt: "134324640000000000" } : { procStart: oldStart }) };
+    assert.equal(await claudeProcessState(marker, { platform, kill: () => {}, readStart }), "unverified");
+    assert.equal(attempts, expectedAttempts);
+  }
+});
+
 async function setup(context) {
   const fixture = await createClaudeHomeFixture();
   context.after(() => removeClaudeHomeFixture(fixture));
