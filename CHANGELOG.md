@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.13.0] - 2026-11-28
+
+### Added
+
+- Continue a session in ChatGPT Desktop or Claude Desktop from the browser inspector. Session Steward prepares a local Markdown archive with recent context, paged indexes, recorded tool details, and source references, then opens a prefilled local coding chat for review and sending.
+- Complete-history export streams through existing provider parsers, independently of the timeline window. Partial or changing source data is noted in the destination prompt, and completed archives remain available if a desktop app cannot open.
+- Destination-specific Handoff controls and an outlined copy icon stay available before and after preparation. The copy icon prepares the handoff without opening the destination app and confirms copying in its tooltip. Incomplete exports show a dismissible Partial handoff warning with an icon and coverage details.
+- Session details consolidate Handoff, copy, Keep session and workspace actions in one toolbar. View handoffs filters to the exact source session, with a visible filter and a way back to all handoffs.
+- Manage project-local handoff files across projects using a persistent application-data catalog: search, age and size filters, selected deletion, interrupted-cleanup retry, missing-listing removal, and explicit project discovery. Verified unchanged archives are reused; automatic deletion remains off.
+
+### Changed
+
+- Refreshed compatibility coverage for Codex CLI 0.172.0, ChatGPT 26.1120.50957, Claude Code 2.1.332, and Claude Desktop 6.28899.6, while retaining the existing supported versions.
+
+### Fixed
+
+- Codex tool inventories and token bookkeeping, plus Claude Desktop data-flow and session-lineage metadata, no longer count as unknown conversation records. Unsupported records still appear in coverage warnings.
+
 ## [0.12.2] - 2026-11-21
 
 ### Changed

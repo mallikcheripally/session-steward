@@ -1,0 +1,29 @@
+{
+  "measuredAt": "2026-11-22T07:13:55.841Z",
+  "platform": "darwin",
+  "node": "v24.15.0",
+  "results": [
+    {
+      "inputBytes": 33742848,
+      "durationMs": 348.55,
+      "records": 4096,
+      "chunks": 1171,
+      "baselineRssMiB": 52.03125,
+      "peakRssMiB": 87.96875,
+      "increaseRssMiB": 35.9375,
+      "invalid": 0,
+      "oversized": 0
+    },
+    {
+      "inputBytes": 268888320,
+      "durationMs": 2659.92,
+      "records": 32640,
+      "chunks": 9326,
+      "baselineRssMiB": 51.96875,
+      "peakRssMiB": 133.328125,
+      "increaseRssMiB": 81.359375,
+      "invalid": 0,
+      "oversized": 0
+    }
+  ]
+}

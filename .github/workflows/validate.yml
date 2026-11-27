@@ -111,3 +111,9 @@ jobs:
 
       - name: Benchmark session tokens
         run: npm run benchmark:tokens
+
+      - name: Benchmark complete session handoffs
+        run: npm run benchmark:handoff
+
+      - name: Benchmark handoff catalog at 50000 archives
+        run: npm run benchmark:handoff-catalog

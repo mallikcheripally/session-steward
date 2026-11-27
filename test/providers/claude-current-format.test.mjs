@@ -9,10 +9,10 @@ import { createClaudeHomeFixture, removeClaudeHomeFixture } from "../fixtures/cl
 const claude = getProvider("claude-code");
 // Recorded with the official CLIs in isolated homes, --bare --print,
 // and a loopback SSE mock. No real model request or credentials were used.
-const transcripts = new Map(await Promise.all(["2.1.325", "2.1.330"].map(async (version) => [
+const transcripts = new Map(await Promise.all(["2.1.325", "2.1.330", "2.1.332"].map(async (version) => [
   version, await fs.readFile(new URL(`../fixtures/claude-${version}.jsonl`, import.meta.url), "utf8"),
 ])));
-const transcript = transcripts.get("2.1.330");
+const transcript = transcripts.get("2.1.332");
 const recordedId = "44444444-4444-4444-8444-444444444444";
 
 for (const [version, transcript] of transcripts) {
@@ -57,13 +57,16 @@ test("current Claude Desktop metadata is skipped without hiding unknown records 
   context.after(() => removeClaudeHomeFixture(fixture));
   const contents = transcript.replaceAll(recordedId, fixture.desktopId).replaceAll('"sdk-cli"', '"claude-desktop"');
   // Synthetic values preserve the metadata field shapes observed in Desktop
-  // 6.28899.2. No user transcript or private app state is copied into fixtures.
+  // 6.28899.6. No user transcript or private app state is copied into fixtures.
   const metadata = [
     { type: "agent-name", agentName: "Compatibility agent", sessionId: fixture.desktopId },
     { type: "file-history-delta", messageId: "message", snapshotMessageId: "snapshot", trackingPath: "/workspace/example", backup: {}, timestamp: "2026-11-21T00:00:00Z" },
     { type: "relocated", relocatedCwd: "/workspace/relocated", sessionId: fixture.desktopId },
     { type: "api-request-blob", hash: "fixture", sessionId: fixture.desktopId, message: { role: "user", content: "Request metadata must not become a second user message." } },
     { type: "tools-used", tools: ["Read"], sessionId: fixture.desktopId },
+    { type: "derived-from", v: 1, sessionId: fixture.desktopId, sessions: [{ type: "session", id: "other", via: "fork" }] },
+    { type: "data-flow-records", v: 1, sessionId: fixture.desktopId, records: [] },
+    { type: "data-flow-incomplete", v: 1, sessionId: fixture.desktopId, codes: [1] },
   ];
   await fs.writeFile(fixture.desktopTranscript, contents + metadata.map((entry) => `${JSON.stringify(entry)}\n`).join(""));
   const options = { ...fixture, id: fixture.desktopId };
@@ -77,7 +80,7 @@ test("current Claude Desktop metadata is skipped without hiding unknown records 
   assert.equal(after.coverage.unmapped, 1);
   assert.deepEqual(after.coverage.unmappedTypes, [{ type: "claude:future-desktop-record", count: 1 }]);
   assert.equal((await claude.readSessionTokens(options)).total, 8);
-  assert.ok((await claude.diagnoseStorageCompatibility(fixture)).builtFor.claudeDesktop.includes("6.28899.2"));
+  assert.ok((await claude.diagnoseStorageCompatibility(fixture)).builtFor.claudeDesktop.includes("6.28899.6"));
 });
 
 test("Claude accepts CLI and print-mode copies of one local session while retaining unknown entrypoints", async (context) => {
